@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile document",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "subscription": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["username", "email", "createdAt"]
+    },
+    "Tracker": {
+      "title": "Tracker",
+      "description": "Product price tracker",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "url": { "type": "string" },
+        "productName": { "type": "string" },
+        "productImage": { "type": "string" },
+        "currentPrice": { "type": "number" },
+        "targetPrice": { "type": "number" },
+        "currency": { "type": "string" },
+        "currencySymbol": { "type": "string" },
+        "status": { "type": "string" },
+        "lastCheckedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "url", "productName", "currentPrice", "targetPrice", "lastCheckedAt", "createdAt"]
+    },
+    "PriceHistory": {
+      "title": "Price History",
+      "description": "Historical price point for a tracker",
+      "type": "object",
+      "properties": {
+        "trackerId": { "type": "string" },
+        "price": { "type": "number" },
+        "recordedAt": { "type": "string" }
+      },
+      "required": ["trackerId", "price", "recordedAt"]
+    },
+    "ActivityLog": {
+      "title": "Activity Log",
+      "description": "User activity log",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["userId", "action", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profiles"
+    },
+    "/trackers/{trackerId}": {
+      "schema": "Tracker",
+      "description": "Stores tracking items"
+    },
+    "/price_history/{historyId}": {
+      "schema": "PriceHistory",
+      "description": "Stores historical price records for analysis"
+    },
+    "/activity_logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Stores activity logs for users"
+    }
+  }
+}
