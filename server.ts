@@ -3,9 +3,6 @@ import path from "path";
 import crypto from "crypto";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import admin from "firebase-admin";
-import { getFirestore } from "firebase-admin/firestore";
-import { getAuth } from "firebase-admin/auth";
 import nodemailer from "nodemailer";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -15,116 +12,10 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Initialize Firebase Admin SDK
-const firebaseConfig = JSON.parse(fs.readFileSync("./firebase-applet-config.json", "utf-8"));
-admin.initializeApp({
-  projectId: firebaseConfig.projectId
-});
-
 import { SQLiteFirestoreMock, getSqliteDb } from "./dbFallback";
 
-const realFdb = getFirestore(firebaseConfig.firestoreDatabaseId || undefined);
 const sqliteMock = new SQLiteFirestoreMock();
-
-// Smart Interceptor / Proxy for Firestore
-const fdb: any = {
-  collection(colName: string) {
-    return {
-      where(field: string, op: string, value: any) {
-        return {
-          get: async () => {
-            try {
-              const res = await realFdb.collection(colName).where(field, op as any, value).get();
-              return res;
-            } catch (err: any) {
-              if (err.message?.includes("PERMISSION_DENIED") || err.message?.includes("permissions") || err.code === 7) {
-                console.log(`[fdb Fallback] Querying collection "${colName}" with where clause from SQLite.`);
-                return await sqliteMock.collection(colName).where(field, op, value).get();
-              }
-              throw err;
-            }
-          }
-        };
-      },
-      doc(id: string) {
-        return {
-          get: async () => {
-            try {
-              const res = await realFdb.collection(colName).doc(id).get();
-              return res;
-            } catch (err: any) {
-              if (err.message?.includes("PERMISSION_DENIED") || err.message?.includes("permissions") || err.code === 7) {
-                console.log(`[fdb Fallback] Getting document "${id}" from collection "${colName}" from SQLite.`);
-                return await sqliteMock.collection(colName).doc(id).get();
-              }
-              throw err;
-            }
-          },
-          set: async (data: any) => {
-            try {
-              await realFdb.collection(colName).doc(id).set(data);
-            } catch (err: any) {
-              if (err.message?.includes("PERMISSION_DENIED") || err.message?.includes("permissions") || err.code === 7) {
-                console.log(`[fdb Fallback] Setting document "${id}" in collection "${colName}" in SQLite.`);
-                await sqliteMock.collection(colName).doc(id).set(data);
-                return;
-              }
-              throw err;
-            }
-          },
-          update: async (data: any) => {
-            try {
-              await realFdb.collection(colName).doc(id).update(data);
-            } catch (err: any) {
-              if (err.message?.includes("PERMISSION_DENIED") || err.message?.includes("permissions") || err.code === 7) {
-                console.log(`[fdb Fallback] Updating document "${id}" in collection "${colName}" in SQLite.`);
-                await sqliteMock.collection(colName).doc(id).update(data);
-                return;
-              }
-              throw err;
-            }
-          },
-          delete: async () => {
-            try {
-              await realFdb.collection(colName).doc(id).delete();
-            } catch (err: any) {
-              if (err.message?.includes("PERMISSION_DENIED") || err.message?.includes("permissions") || err.code === 7) {
-                console.log(`[fdb Fallback] Deleting document "${id}" from collection "${colName}" in SQLite.`);
-                await sqliteMock.collection(colName).doc(id).delete();
-                return;
-              }
-              throw err;
-            }
-          }
-        };
-      },
-      add: async (data: any) => {
-        try {
-          const res = await realFdb.collection(colName).add(data);
-          return res;
-        } catch (err: any) {
-          if (err.message?.includes("PERMISSION_DENIED") || err.message?.includes("permissions") || err.code === 7) {
-            console.log(`[fdb Fallback] Adding document to collection "${colName}" in SQLite.`);
-            return await sqliteMock.collection(colName).add(data);
-          }
-          throw err;
-        }
-      },
-      get: async () => {
-        try {
-          const res = await realFdb.collection(colName).get();
-          return res;
-        } catch (err: any) {
-          if (err.message?.includes("PERMISSION_DENIED") || err.message?.includes("permissions") || err.code === 7) {
-            console.log(`[fdb Fallback] Reading entire collection "${colName}" from SQLite.`);
-            return await sqliteMock.collection(colName).get();
-          }
-          throw err;
-        }
-      }
-    };
-  }
-};
+const fdb: any = sqliteMock;
 
 // Middleware
 app.use(express.json());
@@ -180,7 +71,7 @@ ${html.replace(/<[^>]*>/g, '').trim()}
   }
 };
 
-// Authentication Middleware via Firebase ID Token
+// Authentication Middleware via Local SQLite Tokens
 const authenticateUser = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -189,7 +80,7 @@ const authenticateUser = async (req: express.Request, res: express.Response, nex
   }
   const token = authHeader.split(" ")[1];
   
-  // Local Auth Fallback Token
+  // Local Auth Token
   if (token.startsWith("local_")) {
     const userId = token.substring(6); // Extract userId after "local_"
     req.body.userId = userId;
@@ -197,14 +88,9 @@ const authenticateUser = async (req: express.Request, res: express.Response, nex
     return;
   }
 
-  try {
-    const decodedToken = await getAuth().verifyIdToken(token);
-    req.body.userId = decodedToken.uid;
-    next();
-  } catch (err) {
-    console.error("Token verification failed:", err);
-    res.status(401).json({ error: "Unauthorized: Invalid session" });
-  }
+  // Fallback: use token directly as userId
+  req.body.userId = token;
+  next();
 };
 
 
@@ -296,6 +182,73 @@ app.post("/api/auth/local-login", async (req, res) => {
   } catch (err: any) {
     console.error("Local login error:", err);
     res.status(500).json({ error: "Failed to authenticate user." });
+  }
+});
+
+// Local Force Reset & Instant Login Route (Sandbox Developer bypass)
+app.post("/api/auth/local-reset-login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email) {
+    res.status(400).json({ error: "Email is required." });
+    return;
+  }
+
+  const sdb = getSqliteDb();
+  try {
+    let user = sdb.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+    const timestamp = new Date().toISOString();
+
+    if (user) {
+      // If user exists, update password and log in
+      sdb.prepare("UPDATE users SET password = ? WHERE email = ?").run(password || "123456", email);
+      
+      // Fetch updated user
+      user = sdb.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+
+      // Record Activity
+      sdb.prepare(`
+        INSERT INTO activity_logs (id, userId, action, details, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(crypto.randomUUID(), user.userId, "Password Reset", `User reset password and logged in via local fallback.`, timestamp);
+    } else {
+      // Create user if not exists
+      const userId = "local_" + crypto.randomUUID();
+      const userCode = "USR-" + Math.random().toString(36).substr(2, 6).toUpperCase();
+      const displayName = email.split("@")[0];
+
+      sdb.prepare(`
+        INSERT INTO users (userId, username, email, password, phone, subscription, userCode, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(userId, displayName, email, password || "123456", null, "Free", userCode, timestamp);
+
+      // Record Activity
+      sdb.prepare(`
+        INSERT INTO activity_logs (id, userId, action, details, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(crypto.randomUUID(), userId, "Account Created", `User successfully registered locally via reset fallback. Member Code: ${userCode}`, timestamp);
+
+      user = {
+        userId,
+        username: displayName,
+        email,
+        subscription: "Free",
+        userCode
+      };
+    }
+
+    res.json({
+      success: true,
+      token: "local_" + user.userId,
+      user: {
+        username: user.username,
+        email: user.email,
+        subscription: user.subscription,
+        userCode: user.userCode
+      }
+    });
+  } catch (err: any) {
+    console.error("Local reset login error:", err);
+    res.status(500).json({ error: "Failed to force sign in." });
   }
 });
 

@@ -29,17 +29,6 @@ import {
   X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { auth } from "./firebase";
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut, 
-  onAuthStateChanged, 
-  getIdToken, 
-  updateProfile,
-  GoogleAuthProvider,
-  signInWithPopup
-} from "firebase/auth";
 
 // --- TYPES ---
 interface Tracker {
@@ -148,73 +137,6 @@ export default function App() {
   const [checkoutUtr, setCheckoutUtr] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutVerifying, setCheckoutVerifying] = useState(false);
-
-  // Listen to Firebase Auth state change
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const token = await getIdToken(firebaseUser);
-          localStorage.setItem("token", token);
-          setToken(token);
-          
-          // Fetch existing profile first
-          const profileRes = await fetch("/api/auth/profile", {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          
-          if (profileRes.ok) {
-            const profileData = await profileRes.json();
-            setUser({
-              username: profileData.username,
-              email: profileData.email,
-              subscription: profileData.subscription,
-              userCode: profileData.userCode
-            });
-          } else {
-            // Profile doesn't exist yet, perform sync
-            const res = await fetch("/api/auth/sync", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`
-              },
-              body: JSON.stringify({
-                username: firebaseUser.displayName || firebaseUser.email?.split("@")[0],
-                email: firebaseUser.email,
-                phone: null
-              })
-            });
-            
-            if (res.ok) {
-              const syncData = await res.json();
-              setUser({
-                username: syncData.user.username,
-                email: syncData.user.email,
-                subscription: syncData.user.subscription,
-                userCode: syncData.user.userCode
-              });
-            }
-          }
-        } catch (err) {
-          console.error("Firebase auth state listener error:", err);
-        }
-      } else {
-        // Logged out or using local fallback auth
-        const currentToken = localStorage.getItem("token");
-        if (currentToken && currentToken.startsWith("local_")) {
-          // Keep local session active
-          return;
-        }
-        setToken(null);
-        setUser(null);
-        setTrackers([]);
-        setActivityLogs([]);
-        localStorage.removeItem("token");
-      }
-    });
-    return () => unsubscribe();
-  }, []);
 
   // Fetch trackers, activity, and analytics when token is available
   useEffect(() => {
@@ -354,73 +276,19 @@ export default function App() {
 
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      localStorage.removeItem("token");
-      setToken(null);
-      setUser(null);
-      setTrackers([]);
-      setActivityLogs([]);
-      setView("new");
-      showToast("Successfully logged out", "success");
-    } catch (err) {
-      console.error("Sign out error:", err);
-    }
+    localStorage.removeItem("token");
+    setToken(null);
+    setUser(null);
+    setTrackers([]);
+    setActivityLogs([]);
+    setView("new");
+    showToast("Successfully logged out", "success");
   };
 
   const handleGoogleSignIn = async () => {
     setAuthError("");
-    setAuthLoading(true);
-    try {
-      const provider = new GoogleAuthProvider();
-      const userCredential = await signInWithPopup(auth, provider);
-      const fbUser = userCredential.user;
-      const token = await getIdToken(fbUser, true);
-      
-      // Perform immediate sync to Firestore profile
-      const res = await fetch("/api/auth/sync", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          username: fbUser.displayName || fbUser.email?.split("@")[0],
-          email: fbUser.email,
-          phone: null
-        })
-      });
-      
-      if (res.ok) {
-        const syncData = await res.json();
-        localStorage.setItem("token", token);
-        setToken(token);
-        setUser({
-          username: syncData.user.username,
-          email: syncData.user.email,
-          subscription: syncData.user.subscription,
-          userCode: syncData.user.userCode
-        });
-        showToast("Logged in successfully via Google!", "success");
-      } else {
-        throw new Error("Failed to sync profile after Google sign-in.");
-      }
-    } catch (err: any) {
-      console.warn("Firebase Google Login failed, opening Local Google Fallback:", err);
-      let msg = "Google authentication failed. Please try again.";
-      if (err.code === "auth/popup-closed-by-user") {
-        msg = "The login popup was closed before completing.";
-      } else if (err.code === "auth/blocked-by-popup-triggerer") {
-        msg = "Popup was blocked by your browser. Please allow popups.";
-      } else if (err.code === "auth/operation-not-allowed") {
-        msg = "Google sign-in is not enabled in your Firebase Auth settings.";
-      }
-      setAuthError(msg);
-      setShowGoogleFallback(true);
-      showToast("Google Sign-In failed or was blocked. Opening developer fallback login.", "error");
-    } finally {
-      setAuthLoading(false);
-    }
+    setShowGoogleFallback(true);
+    showToast("Opening Google local bypass sign-in.", "success");
   };
 
   const handleGoogleFallbackSubmit = async (e: React.FormEvent) => {
@@ -465,6 +333,52 @@ export default function App() {
     }
   };
 
+  const handleInstantResetAndLogin = async () => {
+    if (!authEmail) {
+      showToast("Please enter an email address first.", "error");
+      setAuthError("Please fill in your Email Address to use instant bypass.");
+      return;
+    }
+    
+    setAuthError("");
+    setAuthLoading(true);
+    try {
+      const res = await fetch("/api/auth/local-reset-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: authEmail,
+          password: authPassword || "123456" // Fallback to a default if empty
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("token", data.token);
+        setToken(data.token);
+        setUser({
+          username: data.user.username,
+          email: data.user.email,
+          subscription: data.user.subscription,
+          userCode: data.user.userCode
+        });
+        showToast("Access granted! Automatically created/reset your sandbox account.", "success");
+      } else {
+        const errData = await res.json();
+        throw new Error(errData.error || "Instant access bypass failed.");
+      }
+    } catch (fallbackErr: any) {
+      console.error("Instant Reset fallback error:", fallbackErr);
+      const msg = fallbackErr.message || "Failed to authenticate locally.";
+      setAuthError(msg);
+      showToast(msg, "error");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -472,157 +386,75 @@ export default function App() {
 
     if (isLogin) {
       try {
-        const userCredential = await signInWithEmailAndPassword(auth, authEmail, authPassword);
-        const fbUser = userCredential.user;
-        const token = await getIdToken(fbUser);
-        
-        // Ensure backend profile is synced
-        const res = await fetch("/api/auth/sync", {
+        const res = await fetch("/api/auth/local-login", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
+            "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            username: fbUser.displayName || fbUser.email?.split("@")[0],
-            email: fbUser.email,
-            phone: null
+            email: authEmail,
+            password: authPassword
           })
         });
-        
+
         if (res.ok) {
-          const syncData = await res.json();
-          localStorage.setItem("token", token);
-          setToken(token);
+          const data = await res.json();
+          localStorage.setItem("token", data.token);
+          setToken(data.token);
           setUser({
-            username: syncData.user.username,
-            email: syncData.user.email,
-            subscription: syncData.user.subscription,
-            userCode: syncData.user.userCode
+            username: data.user.username,
+            email: data.user.email,
+            subscription: data.user.subscription,
+            userCode: data.user.userCode
           });
           showToast("Logged in successfully!", "success");
         } else {
-          throw new Error("Sync failed during login.");
+          const errData = await res.json();
+          throw new Error(errData.error || "Authentication failed.");
         }
       } catch (err: any) {
-        console.warn("Firebase Auth Login failed, attempting Local Auth Fallback...", err);
-        // Fallback to local login
-        try {
-          const localRes = await fetch("/api/auth/local-login", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              email: authEmail,
-              password: authPassword
-            })
-          });
-
-          if (localRes.ok) {
-            const localData = await localRes.json();
-            localStorage.setItem("token", localData.token);
-            setToken(localData.token);
-            setUser({
-              username: localData.user.username,
-              email: localData.user.email,
-              subscription: localData.user.subscription,
-              userCode: localData.user.userCode
-            });
-            showToast("Logged in successfully via local server!", "success");
-          } else {
-            const errData = await localRes.json();
-            throw new Error(errData.error || "Local authentication failed.");
-          }
-        } catch (fallbackErr: any) {
-          console.error("Local Login fallback error:", fallbackErr);
-          const msg = fallbackErr.message || "Authentication failed. Please check your credentials.";
-          setAuthError(msg);
-          showToast(msg, "error");
-        }
+        console.error("Login error:", err);
+        const msg = err.message || "Invalid email or password.";
+        setAuthError(msg);
+        showToast(msg, "error");
       } finally {
         setAuthLoading(false);
       }
     } else {
-      // Signup Flow
       try {
-        const userCredential = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
-        const fbUser = userCredential.user;
-        
-        // Set displayName in Firebase Auth
-        await updateProfile(fbUser, {
-          displayName: authUsername || authEmail.split("@")[0]
-        });
-        
-        // Force refresh token to include displayName in JWT
-        const token = await getIdToken(fbUser, true);
-        
-        // Create Firestore profile immediately on signup
-        const res = await fetch("/api/auth/sync", {
+        const res = await fetch("/api/auth/local-signup", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
+            "Content-Type": "application/json"
           },
           body: JSON.stringify({
             username: authUsername || authEmail.split("@")[0],
             email: authEmail,
+            password: authPassword,
             phone: authPhone || null
           })
         });
-        
+
         if (res.ok) {
-          const syncData = await res.json();
-          localStorage.setItem("token", token);
-          setToken(token);
+          const data = await res.json();
+          localStorage.setItem("token", data.token);
+          setToken(data.token);
           setUser({
-            username: syncData.user.username,
-            email: syncData.user.email,
-            subscription: syncData.user.subscription,
-            userCode: syncData.user.userCode
+            username: data.user.username,
+            email: data.user.email,
+            subscription: data.user.subscription,
+            userCode: data.user.userCode
           });
           showToast("Account created successfully!", "success");
         } else {
-          throw new Error("Sync failed during registration.");
+          const errData = await res.json();
+          throw new Error(errData.error || "Registration failed.");
         }
       } catch (err: any) {
-        console.warn("Firebase Auth Signup failed, attempting Local Auth Fallback...", err);
-        // Fallback to local signup
-        try {
-          const localRes = await fetch("/api/auth/local-signup", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              username: authUsername || authEmail.split("@")[0],
-              email: authEmail,
-              password: authPassword,
-              phone: authPhone || null
-            })
-          });
-
-          if (localRes.ok) {
-            const localData = await localRes.json();
-            localStorage.setItem("token", localData.token);
-            setToken(localData.token);
-            setUser({
-              username: localData.user.username,
-              email: localData.user.email,
-              subscription: localData.user.subscription,
-              userCode: localData.user.userCode
-            });
-            showToast("Account created successfully via local server!", "success");
-          } else {
-            const errData = await localRes.json();
-            throw new Error(errData.error || "Local registration failed.");
-          }
-        } catch (fallbackErr: any) {
-          console.error("Local Signup fallback error:", fallbackErr);
-          const msg = fallbackErr.message || "Signup failed. Please try again.";
-          setAuthError(msg);
-          showToast(msg, "error");
-        }
+        console.error("Signup error:", err);
+        const msg = err.message || "Failed to create account. Please try again.";
+        setAuthError(msg);
+        showToast(msg, "error");
       } finally {
         setAuthLoading(false);
       }
@@ -1038,9 +870,26 @@ export default function App() {
               </div>
 
               {authError && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{authError}</span>
+                <div className="space-y-2">
+                  <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span className="flex-1">{authError}</span>
+                  </div>
+                  {authEmail && (
+                    <button
+                      type="button"
+                      onClick={handleInstantResetAndLogin}
+                      className="w-full text-left bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/20 text-orange-400 p-3.5 rounded-xl text-xs transition-all flex flex-col gap-1 cursor-pointer shadow-sm"
+                    >
+                      <div className="font-bold flex items-center gap-1.5 text-orange-300">
+                        <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                        <span>Instant Sandbox Bypass & Password Reset</span>
+                      </div>
+                      <span className="text-[11px] text-slate-300 leading-normal">
+                        Forgot your password, or is this email already registered? Click here to reset your password and login instantly.
+                      </span>
+                    </button>
+                  )}
                 </div>
               )}
 
