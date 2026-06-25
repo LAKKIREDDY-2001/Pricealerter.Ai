@@ -2427,7 +2427,13 @@ const startServer = async () => {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    let distPath = path.join(process.cwd(), "dist");
+    if (!fs.existsSync(distPath) || !fs.existsSync(path.join(distPath, "index.html"))) {
+      const docsPath = path.join(process.cwd(), "docs");
+      if (fs.existsSync(docsPath) && fs.existsSync(path.join(docsPath, "index.html"))) {
+        distPath = docsPath;
+      }
+    }
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
