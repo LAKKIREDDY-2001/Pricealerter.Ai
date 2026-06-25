@@ -141,7 +141,8 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
 
   // Dashboard state
-  const [currentView, setView] = useState<"new" | "my-trackers" | "trends" | "settings" | "oracle" | "compare">("new");
+  const [currentView, setView] = useState<"home" | "new" | "my-trackers" | "trends" | "settings" | "oracle" | "compare">("home");
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [trackers, setTrackers] = useState<Tracker[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsData>({ totalTracked: 0, reachedDeals: 0, totalSavings: 0, storeStats: [] });
@@ -880,103 +881,114 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* --- AUTHENTICATION FLOW --- */}
-      {!authToken ? (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-black">
-          <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-35"></div>
-          
-          <motion.div 
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full max-w-md bg-slate-950/80 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-8 shadow-3xl relative z-10"
-          >
-            <div className="text-center mb-8">
-              <div className="w-14 h-14 bg-gradient-to-tr from-orange-500 to-amber-400 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-orange-500/10">
-                <Bell className="w-7 h-7 text-white animate-pulse" />
-              </div>
-              <h2 className="text-3xl font-extrabold text-white tracking-tight">AI Price Alert</h2>
-              <p className="text-slate-400 text-sm mt-2">Smart AI-powered price drop tracking across 100+ stores</p>
-            </div>
+      {/* --- GLOWING AUTH MODAL --- */}
+      <AnimatePresence>
+        {isAuthModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-md bg-slate-950/90 border border-slate-800/80 rounded-3xl p-8 shadow-3xl relative z-10"
+            >
+              <button 
+                onClick={() => { setIsAuthModalOpen(false); setAuthError(""); }}
+                className="absolute top-5 right-5 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-900 transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
 
-            <form onSubmit={handleAuthSubmit} className="space-y-5">
-              {!isLogin && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 tracking-wide uppercase">Username</label>
+              <div className="text-center mb-6">
+                <div className="w-12 h-12 bg-gradient-to-tr from-orange-500 to-amber-400 rounded-xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-orange-500/15">
+                  <Bell className="w-6 h-6 text-white" />
+                </div>
+                <h2 className="text-2xl font-black text-white tracking-tight">{isLogin ? "Welcome to ValueDuel" : "Create Free Account"}</h2>
+                <p className="text-slate-400 text-xs mt-1">Unlock instant e-commerce price drop updates</p>
+              </div>
+
+              <form onSubmit={async (e) => {
+                await handleAuthSubmit(e);
+                if (localStorage.getItem("token")) {
+                  setIsAuthModalOpen(false);
+                }
+              }} className="space-y-4">
+                {!isLogin && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Username</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                      <input 
+                        type="text" 
+                        required 
+                        value={authUsername} 
+                        onChange={(e) => setAuthUsername(e.target.value)}
+                        placeholder="Enter a cool username" 
+                        className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2.5 pl-9 pr-4 text-xs outline-none transition-all placeholder:text-slate-600 font-semibold"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Email Address</label>
                   <div className="relative">
-                    <User className="absolute left-3.5 top-3.5 w-5 h-5 text-slate-500" />
+                    <Mail className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
                     <input 
-                      type="text" 
+                      type="email" 
                       required 
-                      value={authUsername} 
-                      onChange={(e) => setAuthUsername(e.target.value)}
-                      placeholder="Enter a cool username" 
-                      className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3 pl-11 pr-4 text-sm outline-none transition-all placeholder:text-slate-600"
+                      value={authEmail} 
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      placeholder="you@example.com" 
+                      className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2.5 pl-9 pr-4 text-xs outline-none transition-all placeholder:text-slate-600 font-semibold"
                     />
                   </div>
                 </div>
-              )}
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-400 tracking-wide uppercase">Email Address</label>
-                <div className="relative">
-                  <Mail className="absolute left-3.5 top-3.5 w-5 h-5 text-slate-500" />
-                  <input 
-                    type="email" 
-                    required 
-                    value={authEmail} 
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    placeholder="you@example.com" 
-                    className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3 pl-11 pr-4 text-sm outline-none transition-all placeholder:text-slate-600"
-                  />
-                </div>
-              </div>
+                {!isLogin && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Phone (Optional)</label>
+                    <div className="relative">
+                      <Globe className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                      <input 
+                        type="tel" 
+                        value={authPhone} 
+                        onChange={(e) => setAuthPhone(e.target.value)}
+                        placeholder="+919876543210" 
+                        className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2.5 pl-9 pr-4 text-xs outline-none transition-all placeholder:text-slate-600 font-semibold"
+                      />
+                    </div>
+                  </div>
+                )}
 
-              {!isLogin && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 tracking-wide uppercase">Phone (Optional)</label>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Password</label>
                   <div className="relative">
-                    <Globe className="absolute left-3.5 top-3.5 w-5 h-5 text-slate-500" />
+                    <Lock className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
                     <input 
-                      type="tel" 
-                      value={authPhone} 
-                      onChange={(e) => setAuthPhone(e.target.value)}
-                      placeholder="+919876543210" 
-                      className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3 pl-11 pr-4 text-sm outline-none transition-all placeholder:text-slate-600"
+                      type="password" 
+                      required 
+                      value={authPassword} 
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      placeholder="••••••••" 
+                      className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2.5 pl-9 pr-4 text-xs outline-none transition-all placeholder:text-slate-600 font-semibold"
                     />
                   </div>
                 </div>
-              )}
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-400 tracking-wide uppercase">Password</label>
-                <div className="relative">
-                  <Lock className="absolute left-3.5 top-3.5 w-5 h-5 text-slate-500" />
-                  <input 
-                    type="password" 
-                    required 
-                    value={authPassword} 
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    placeholder="••••••••" 
-                    className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3 pl-11 pr-4 text-sm outline-none transition-all placeholder:text-slate-600"
-                  />
-                </div>
-              </div>
+                {authError && (
+                  <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-2.5 rounded-xl text-[11px] flex items-center gap-2 font-medium">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="flex-1">{authError}</span>
+                  </div>
+                )}
 
-              {authError && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span className="flex-1">{authError}</span>
-                </div>
-              )}
-
-              <div className="space-y-3 pt-1">
                 <button 
                   type="submit" 
                   disabled={authLoading}
-                  className="w-full bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="w-full bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-xs uppercase tracking-wider"
                 >
                   {authLoading ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <>
                       <span>{isLogin ? "Sign In" : "Register Now"}</span>
@@ -984,160 +996,500 @@ export default function App() {
                     </>
                   )}
                 </button>
-              </div>
-            </form>
+              </form>
 
-            <div className="text-center mt-6 text-sm text-slate-400">
-              {isLogin ? "New to AI Price Alert?" : "Already have an account?"}{" "}
-              <button 
-                onClick={() => { setIsLogin(!isLogin); setAuthError(""); }}
-                className="text-orange-400 hover:text-orange-300 font-semibold underline cursor-pointer"
+              <div className="text-center mt-5 text-xs text-slate-400">
+                {isLogin ? "New to ValueDuel?" : "Already have an account?"}{" "}
+                <button 
+                  onClick={() => { setIsLogin(!isLogin); setAuthError(""); }}
+                  className="text-orange-400 hover:text-orange-300 font-semibold underline cursor-pointer bg-transparent border-none p-0 outline-none"
+                >
+                  {isLogin ? "Create an account" : "Log in here"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- REAL WEBSITE TOP NAVIGATION BAR --- */}
+      <header className="sticky top-0 z-40 w-full bg-slate-950/80 backdrop-blur-md border-b border-slate-800/60 px-6 lg:px-12 py-4 flex items-center justify-between">
+        <div 
+          onClick={() => setView("home")} 
+          className="flex items-center gap-3 cursor-pointer group"
+        >
+          <div className="w-10 h-10 bg-gradient-to-tr from-orange-500 to-amber-400 rounded-xl flex items-center justify-center shadow-md shadow-orange-500/10 group-hover:scale-105 transition-transform">
+            <GitCompare className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="font-black text-xl text-white leading-none tracking-tight">ValueDuel</h1>
+            <span className="text-[9px] text-orange-400 font-extrabold uppercase tracking-widest mt-0.5 block">AI Price Intelligence</span>
+          </div>
+        </div>
+
+        {/* Navigation links */}
+        <nav className="hidden md:flex items-center gap-1">
+          {[
+            { id: "home", label: "Home" },
+            { id: "compare", label: "AI Product Duel" },
+            { id: "new", label: "Price Tracker" },
+            { id: "my-trackers", label: "Dashboard" },
+            { id: "trends", label: "Trends Feed" }
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setView(item.id as any);
+                if (!authToken && ["my-trackers", "trends"].includes(item.id)) {
+                  showToast("Connecting you to our secure log in console...", "success");
+                }
+              }}
+              className={`px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                currentView === item.id
+                  ? "bg-orange-500/10 text-orange-400 border border-orange-500/10"
+                  : "text-slate-400 hover:text-white hover:bg-slate-900/50"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* Action / User profile */}
+        <div className="flex items-center gap-4">
+          {authToken ? (
+            <div className="flex items-center gap-3 bg-slate-900/80 border border-slate-800/80 px-3 py-1.5 rounded-xl">
+              <div className="w-7 h-7 bg-orange-500/10 rounded-lg flex items-center justify-center text-xs font-extrabold text-orange-400 border border-orange-500/20">
+                {currentUser?.username.slice(0, 2).toUpperCase() || "US"}
+              </div>
+              <div className="hidden sm:block text-left">
+                <p className="text-xs font-bold text-white truncate max-w-[100px]">{currentUser?.username || "Shopper"}</p>
+                <p className="text-[9px] text-amber-400 font-mono tracking-wide">Pro Tier</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all cursor-pointer"
+                title="Sign Out"
               >
-                {isLogin ? "Create an account" : "Log in here"}
+                <LogOut className="w-3.5 h-3.5" />
               </button>
             </div>
-          </motion.div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setIsLogin(true); setIsAuthModalOpen(true); }}
+                className="text-xs font-bold text-slate-300 hover:text-white px-3.5 py-2 cursor-pointer transition-colors"
+              >
+                Sign In
+              </button>
+              <button
+                onClick={() => { setIsLogin(false); setIsAuthModalOpen(true); }}
+                className="bg-gradient-to-r from-orange-500 to-amber-500 hover:brightness-110 text-white font-extrabold text-xs px-4 py-2 rounded-xl shadow-lg shadow-orange-500/15 transition-all cursor-pointer uppercase tracking-wider"
+              >
+                Join Free
+              </button>
+            </div>
+          )}
         </div>
-      ) : (
+      </header>
+
+      {/* --- MAIN PAGE WORKSPACE --- */}
+      <main className="min-h-screen bg-slate-900 flex flex-col min-w-0">
         
-        // --- CORE APPLICATION WORKSPACE ---
-        <div className="min-h-screen flex flex-col md:flex-row">
+        {/* Dynamic sub-header warning or dashboard banner */}
+        {authToken && ["my-trackers", "trends", "settings"].includes(currentView) && (
+          <div className="h-12 border-b border-slate-800/40 bg-slate-950/20 px-6 sm:px-12 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500">Workspace</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-700" />
+              <span className="text-white font-semibold capitalize">{currentView === "new" ? "New Alert" : currentView}</span>
+            </div>
+            <div className="hidden sm:flex items-center gap-2 bg-slate-800/40 px-3 py-1 rounded-full border border-slate-800/60 text-[10px] font-semibold">
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span className="text-slate-400">Live proxy checkers active:</span>
+              <span className="text-emerald-400 font-bold">5s loop</span>
+            </div>
+          </div>
+        )}
+
+        {/* Content Wrapper */}
+        <div className="flex-1 overflow-y-auto p-6 sm:p-12 max-w-7xl w-full mx-auto space-y-12">
           
-          {/* Dashboard Left Sidebar */}
-          <aside className="w-full md:w-64 bg-slate-950 border-r border-slate-800/60 flex flex-col justify-between shrink-0 p-5">
-            <div className="space-y-8">
-              <div className="flex items-center gap-3 px-2">
-                <div className="w-10 h-10 bg-gradient-to-tr from-orange-500 to-amber-400 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/10">
-                  <Bell className="w-5 h-5 text-white" />
+          {/* --- INLINE LOGIN GATE FOR PROTECTED DASHBOARD VIEWS --- */}
+          {!authToken && ["my-trackers", "trends", "settings", "oracle"].includes(currentView) && (
+            <div className="max-w-md mx-auto py-12">
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-slate-950/60 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-8 shadow-2xl space-y-6 text-center"
+              >
+                <div className="w-14 h-14 bg-orange-500/10 border border-orange-500/20 text-orange-400 rounded-2xl flex items-center justify-center mx-auto">
+                  <Lock className="w-7 h-7" />
                 </div>
-                <div>
-                  <h1 className="font-extrabold text-lg text-white leading-tight tracking-tight">Price Alerter</h1>
-                  <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">AI Copilot</span>
+                <div className="space-y-2">
+                  <h2 className="text-2xl font-black text-white">Connect Your Dashboard</h2>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    To view your active trackers, historical price analytics charts, alert channels, and the AI Cricket Oracle, sign in or register a free account.
+                  </p>
                 </div>
-              </div>
 
-              <div className="space-y-1.5">
-                <button 
-                  onClick={() => setView("new")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                    currentView === "new" 
-                      ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/10" 
-                      : "text-slate-400 hover:bg-slate-900 hover:text-white"
-                  }`}
-                >
-                  <PlusCircle className="w-5 h-5" />
-                  <span>New Alert</span>
-                </button>
-
-                <button 
-                  onClick={() => setView("my-trackers")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                    currentView === "my-trackers" 
-                      ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/10" 
-                      : "text-slate-400 hover:bg-slate-900 hover:text-white"
-                  }`}
-                >
-                  <List className="w-5 h-5" />
-                  <span>My Trackers</span>
-                  {trackers.length > 0 && (
-                    <span className="ml-auto bg-slate-800/80 text-orange-400 text-xs font-bold px-2 py-0.5 rounded-full border border-slate-700">
-                      {trackers.length}
-                    </span>
+                <form onSubmit={handleAuthSubmit} className="space-y-4 text-left">
+                  {!isLogin && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Username</label>
+                      <div className="relative">
+                        <User className="absolute left-3 top-3.5 w-4 h-4 text-slate-500" />
+                        <input 
+                          type="text" 
+                          required 
+                          value={authUsername} 
+                          onChange={(e) => setAuthUsername(e.target.value)}
+                          placeholder="Enter a cool username" 
+                          className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2.5 pl-9 pr-4 text-xs outline-none transition-all placeholder:text-slate-600 font-semibold"
+                        />
+                      </div>
+                    </div>
                   )}
-                </button>
 
-                <button 
-                  onClick={() => setView("trends")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                    currentView === "trends" 
-                      ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/10" 
-                      : "text-slate-400 hover:bg-slate-900 hover:text-white"
-                  }`}
-                >
-                  <LineChart className="w-5 h-5" />
-                  <span>Price Trends</span>
-                </button>
-
-                <button 
-                  onClick={() => setView("compare")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                    currentView === "compare" 
-                      ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/10" 
-                      : "text-slate-400 hover:bg-slate-900 hover:text-white"
-                  }`}
-                >
-                  <GitCompare className="w-5 h-5" />
-                  <span>Compare Products</span>
-                  <span className="ml-auto bg-orange-500/10 text-orange-400 text-[10px] font-extrabold px-2 py-0.5 rounded border border-orange-500/20">
-                    AI Duel
-                  </span>
-                </button>
-
-                <button 
-                  onClick={() => setView("settings")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                    currentView === "settings" 
-                      ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/10" 
-                      : "text-slate-400 hover:bg-slate-900 hover:text-white"
-                  }`}
-                >
-                  <Settings className="w-5 h-5" />
-                  <span>Settings</span>
-                  <span className="ml-auto bg-emerald-500/10 text-emerald-400 text-[10px] font-extrabold px-2 py-0.5 rounded border border-emerald-500/20">
-                    Channels
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            {/* Sidebar bottom profile */}
-            <div className="border-t border-slate-800/60 pt-5 mt-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-slate-900 rounded-full border border-slate-800 flex items-center justify-center font-bold text-orange-400">
-                    {currentUser?.username.slice(0, 2).toUpperCase() || "US"}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Email Address</label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-3.5 w-4 h-4 text-slate-500" />
+                      <input 
+                        type="email" 
+                        required 
+                        value={authEmail} 
+                        onChange={(e) => setAuthEmail(e.target.value)}
+                        placeholder="you@example.com" 
+                        className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2.5 pl-9 pr-4 text-xs outline-none transition-all placeholder:text-slate-600"
+                      />
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-white truncate">{currentUser?.username || "User"}</p>
-                    <p className="text-[10px] text-slate-500 truncate">{currentUser?.email || "user@example.com"}</p>
-                    {currentUser?.userCode && (
-                      <p className="text-[9px] text-orange-400 font-mono tracking-wide mt-0.5 font-bold">Code: {currentUser.userCode}</p>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Password</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-3.5 w-4 h-4 text-slate-500" />
+                      <input 
+                        type="password" 
+                        required 
+                        value={authPassword} 
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        placeholder="••••••••" 
+                        className="w-full bg-slate-900/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2.5 pl-9 pr-4 text-xs outline-none transition-all placeholder:text-slate-600"
+                      />
+                    </div>
+                  </div>
+
+                  {authError && (
+                    <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-2.5 rounded-xl text-xs flex items-center gap-2">
+                      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="flex-1 font-medium">{authError}</span>
+                    </div>
+                  )}
+
+                  <button 
+                    type="submit" 
+                    disabled={authLoading}
+                    className="w-full bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-xs uppercase tracking-wider"
+                  >
+                    {authLoading ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <>
+                        <span>{isLogin ? "Sign In" : "Register Now"}</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
                     )}
+                  </button>
+                </form>
+
+                <div className="text-center mt-4 text-xs text-slate-400">
+                  {isLogin ? "New to ValueDuel?" : "Already have an account?"}{" "}
+                  <button 
+                    onClick={() => { setIsLogin(!isLogin); setAuthError(""); }}
+                    className="text-orange-400 hover:text-orange-300 font-semibold underline cursor-pointer bg-transparent border-none p-0 outline-none"
+                  >
+                    {isLogin ? "Create an account" : "Log in here"}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {/* --- VIEW: HOMEPAGE --- */}
+          {currentView === "home" && (
+            <div className="space-y-24 pb-16">
+              {/* Hero Section */}
+              <div className="relative text-center max-w-4xl mx-auto pt-8 md:pt-16 space-y-6">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-72 h-72 bg-orange-500/10 blur-[120px] rounded-full pointer-events-none"></div>
+                
+                <div className="inline-flex items-center gap-2 bg-gradient-to-r from-orange-500/10 to-amber-500/10 text-orange-400 border border-orange-500/20 text-xs font-extrabold px-4 py-1.5 rounded-full tracking-wider uppercase animate-bounce-slow">
+                  <Sparkles className="w-4 h-4 text-orange-500" />
+                  <span>ValueDuel E-Commerce Intelligence</span>
+                </div>
+
+                <h1 className="text-4xl sm:text-6xl font-black text-white tracking-tight leading-[1.1]">
+                  E-Commerce is a Battle.<br />
+                  <span className="bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-400 bg-clip-text text-transparent">
+                    Win Every Duel.
+                  </span>
+                </h1>
+
+                <p className="text-slate-400 text-lg sm:text-xl max-w-2xl mx-auto leading-relaxed font-medium">
+                  ValueDuel is the ultimate public intelligence platform to scan prices, compare specs side-by-side using advanced AI, and track historical trends across 100+ stores with instant alerts.
+                </p>
+
+                <div className="flex flex-col sm:flex-row justify-center items-center gap-4 pt-4 relative z-10">
+                  <button
+                    onClick={() => setView("compare")}
+                    className="w-full sm:w-auto bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-sm px-8 py-4 rounded-2xl shadow-xl shadow-orange-500/20 hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer"
+                  >
+                    <GitCompare className="w-5 h-5" />
+                    <span>Launch Product Duel</span>
+                  </button>
+                  <button
+                    onClick={() => setView("new")}
+                    className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm px-8 py-4 rounded-2xl border border-slate-700/80 hover:border-slate-600 transition-all flex items-center justify-center gap-3 cursor-pointer"
+                  >
+                    <Bell className="w-5 h-5 text-orange-400" />
+                    <span>Create Live Tracker</span>
+                  </button>
+                </div>
+
+                {/* Stats Ticker */}
+                <div className="pt-8 flex flex-wrap justify-center gap-x-8 gap-y-3 text-xs font-bold text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    148,401 live checks completed today
+                  </span>
+                  <span className="text-slate-700">|</span>
+                  <span className="flex items-center gap-1.5">
+                    ⚡ Average price alert: 4.8 seconds
+                  </span>
+                  <span className="text-slate-700">|</span>
+                  <span className="flex items-center gap-1.5">
+                    💰 Average savings: 18.2%
+                  </span>
+                </div>
+              </div>
+
+              {/* Preloaded Sandbox Scrapes / One-Click Demo */}
+              <div className="space-y-6">
+                <div className="text-center space-y-2">
+                  <h2 className="text-2xl font-black text-white">Interactive Sandbox Arenas</h2>
+                  <p className="text-sm text-slate-400 max-w-md mx-auto">Click any pre-loaded live e-commerce scenario to witness ValueDuel's AI specifications alignment instantly.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+                  {/* Scenario 1: Apparel (The U.S. Polo Assn T-shirt!) */}
+                  <div className="bg-slate-950/40 backdrop-blur-md border border-slate-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-orange-500/30 transition-all duration-300 group">
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-start">
+                        <span className="text-[10px] bg-orange-500/10 text-orange-400 font-extrabold px-2.5 py-1 rounded border border-orange-500/20 uppercase tracking-wide">
+                          Apparel Duel
+                        </span>
+                        <span className="text-emerald-400 text-xs font-bold font-mono">-35% Diff</span>
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-base font-bold text-white group-hover:text-orange-400 transition-colors">U.S. Polo Men T-Shirt</h4>
+                        <p className="text-xs text-slate-400 leading-relaxed">Amazon vs Myntra side-by-side. AI aligns fabric quality, GSM weight, collar styling, and fit profile.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCompareUrl1("https://www.amazon.in/dp/B0CHX5R3XY");
+                        setCompareUrl2("https://www.myntra.com/tshirts/us-polo-assn/us-polo-assn-men-navy-blue-typography-printed-round-neck-t-shirt/23958930/buy");
+                        setView("compare");
+                        showToast("Loaded U.S. Polo Assn. T-shirt comparison! Click 'Initiate AI Product Duel' below.", "success");
+                      }}
+                      className="mt-6 w-full py-2.5 bg-slate-900 hover:bg-orange-500 group-hover:bg-orange-500 text-xs font-bold text-slate-300 hover:text-white rounded-xl border border-slate-800 hover:border-orange-400 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <GitCompare className="w-3.5 h-3.5" />
+                      <span>Compare Side-by-Side</span>
+                    </button>
+                  </div>
+
+                  {/* Scenario 2: Smart Mobile */}
+                  <div className="bg-slate-950/40 backdrop-blur-md border border-slate-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-orange-500/30 transition-all duration-300 group">
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-start">
+                        <span className="text-[10px] bg-amber-500/10 text-amber-400 font-extrabold px-2.5 py-1 rounded border border-amber-500/20 uppercase tracking-wide">
+                          Electronics Duel
+                        </span>
+                        <span className="text-emerald-400 text-xs font-bold font-mono">-₹4,500 Diff</span>
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-base font-bold text-white group-hover:text-orange-400 transition-colors">Apple iPhone 15 Pro</h4>
+                        <p className="text-xs text-slate-400 leading-relaxed">Amazon vs Flipkart. AI aligns storage capacities, processor architecture, warranty terms, and delivery speeds.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCompareUrl1("https://www.amazon.in/dp/B0CHX5R3XY");
+                        setCompareUrl2("https://www.flipkart.com/apple-iphone-15-pro-black-titanium-128-gb/p/itm4b0ab4098");
+                        setView("compare");
+                        showToast("Loaded Apple iPhone 15 Pro comparison! Click 'Initiate AI Product Duel' to align.", "success");
+                      }}
+                      className="mt-6 w-full py-2.5 bg-slate-900 hover:bg-orange-500 group-hover:bg-orange-500 text-xs font-bold text-slate-300 hover:text-white rounded-xl border border-slate-800 hover:border-orange-400 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <GitCompare className="w-3.5 h-3.5" />
+                      <span>Compare Side-by-Side</span>
+                    </button>
+                  </div>
+
+                  {/* Scenario 3: High-end Laptops */}
+                  <div className="bg-slate-950/40 backdrop-blur-md border border-slate-800/80 rounded-2xl p-6 flex flex-col justify-between hover:border-orange-500/30 transition-all duration-300 group">
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-start">
+                        <span className="text-[10px] bg-purple-500/10 text-purple-400 font-extrabold px-2.5 py-1 rounded border border-purple-500/20 uppercase tracking-wide">
+                          Laptop Duel
+                        </span>
+                        <span className="text-emerald-400 text-xs font-bold font-mono">-12% Diff</span>
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-base font-bold text-white group-hover:text-orange-400 transition-colors">MacBook Air vs HP Pav</h4>
+                        <p className="text-xs text-slate-400 leading-relaxed">Direct comparison of MacOS vs Windows. AI normalizes core configurations and reviews to suggest the absolute better pick.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCompareUrl1("https://www.amazon.in/dp/B0CY5JGFSK");
+                        setCompareUrl2("https://www.flipkart.com/hp-pavilion-intel-core-i5-16gb/p/itm53");
+                        setView("compare");
+                        showToast("Loaded Macbook Air vs HP Pavilion comparison! Ready to Duel.", "success");
+                      }}
+                      className="mt-6 w-full py-2.5 bg-slate-900 hover:bg-orange-500 group-hover:bg-orange-500 text-xs font-bold text-slate-300 hover:text-white rounded-xl border border-slate-800 hover:border-orange-400 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <GitCompare className="w-3.5 h-3.5" />
+                      <span>Compare Side-by-Side</span>
+                    </button>
                   </div>
                 </div>
-                <button 
-                  onClick={handleLogout}
-                  className="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all cursor-pointer"
-                  title="Sign Out"
+              </div>
+
+              {/* Core Value Proposition Bento Grid */}
+              <div className="space-y-12">
+                <div className="text-center space-y-2">
+                  <h2 className="text-3xl font-black text-white">Full-Stack Intel, Infinite Savings</h2>
+                  <p className="text-sm text-slate-400 max-w-md mx-auto">Unlike generic tools that only track links, ValueDuel uses Gemini AI to understand the core product spec.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 max-w-5xl mx-auto">
+                  {/* Card 1: 5s Live Loop */}
+                  <div className="md:col-span-7 bg-slate-950/40 border border-slate-800/80 rounded-3xl p-8 relative overflow-hidden flex flex-col justify-between min-h-[240px]">
+                    <div className="space-y-3">
+                      <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center text-orange-400">
+                        <RefreshCw className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-xl font-bold text-white">High-Frequency Live Crawler</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed font-medium">Our proxy-rotator network crawls selected target URLs continuously. Bypasses rate limits, block lists, and bot detectors to notify you the literal second a price drops.</p>
+                    </div>
+                  </div>
+
+                  {/* Card 2: AI spec normalization */}
+                  <div className="md:col-span-5 bg-slate-950/40 border border-slate-800/80 rounded-3xl p-8 relative overflow-hidden flex flex-col justify-between min-h-[240px]">
+                    <div className="space-y-3">
+                      <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-400">
+                        <Sliders className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-xl font-bold text-white">Semantic Parameter Match</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed font-medium">Don't compare apples to oranges. Gemini AI standardizes raw specs across websites so you make mathematically optimal purchase decisions.</p>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Multi channel notifications */}
+                  <div className="md:col-span-5 bg-slate-950/40 border border-slate-800/80 rounded-3xl p-8 relative overflow-hidden flex flex-col justify-between min-h-[240px]">
+                    <div className="space-y-3">
+                      <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
+                        <Bell className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-xl font-bold text-white">Instant Multichannel Alerting</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed font-medium">Receive instant drop warnings straight to your Email and Telegram chat. No app to check daily; just sit back and save money.</p>
+                    </div>
+                  </div>
+
+                  {/* Card 4: Historical charts */}
+                  <div className="md:col-span-7 bg-slate-950/40 border border-slate-800/80 rounded-3xl p-8 relative overflow-hidden flex flex-col justify-between min-h-[240px]">
+                    <div className="space-y-3">
+                      <div className="w-10 h-10 bg-purple-500/10 rounded-xl flex items-center justify-center text-purple-400">
+                        <LineChart className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-xl font-bold text-white">Deep Pricing History Trajectories</h3>
+                      <p className="text-sm text-slate-400 leading-relaxed font-medium">Every tracked link saves previous points to build a comprehensive historical price graph. AI predicts upcoming holiday markdown dips based on previous trends.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Supported Retailer Grid */}
+              <div className="space-y-8 text-center">
+                <div className="space-y-2">
+                  <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-widest">Supported E-Commerce Ecosystem</h3>
+                  <p className="text-xs text-slate-500">Real-time connectors with proxy bypass systems active</p>
+                </div>
+
+                <div className="flex flex-wrap justify-center gap-4 max-w-4xl mx-auto">
+                  {["Amazon.in", "Flipkart", "Myntra", "Ajio", "Meesho", "Snapdeal", "Tata CLiQ", "Reliance Digital"].map((store) => (
+                    <div key={store} className="bg-slate-950/40 px-5 py-3 rounded-xl border border-slate-800/60 flex items-center gap-2.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow shadow-emerald-500/80 animate-pulse"></span>
+                      <span className="text-sm font-bold text-slate-300">{store}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* FAQ Accordion */}
+              <div className="space-y-8 max-w-3xl mx-auto">
+                <div className="text-center space-y-2">
+                  <h2 className="text-2xl font-black text-white">Frequently Asked Questions</h2>
+                  <p className="text-sm text-slate-400">Get instant answers about our crawling mechanism and AI features.</p>
+                </div>
+
+                <div className="space-y-4">
+                  {[
+                    { q: "Is ValueDuel completely free?", a: "Yes! Core features like public side-by-side product comparisons and 3 active price trackers with standard email dispatch channels are 100% free forever. If you need Pro notifications (SMS/Telegram) and unlimited crawlers, you can upgrade." },
+                    { q: "How often does ValueDuel check product pages?", a: "For trackers on your dashboard, we perform a live proxy request loop to verify raw HTML structures, which runs periodically to ensure absolute fresh pricing." },
+                    { q: "What is the AI Spec Normalizer?", a: "Often, websites list specs differently (e.g. '128 GB' on site A and '128 gigabytes ROM' on site B). Our integrated Gemini 3.5-flash AI aligns these attributes side-by-side perfectly so you don't have to decipher them." },
+                    { q: "How do I configure alerts to WhatsApp or Telegram?", a: "Once you create a free account, go to 'Settings' where you can toggle active channels, enter details, and send verified mock alerts instantly." }
+                  ].map((item, idx) => (
+                    <div key={idx} className="bg-slate-950/40 border border-slate-800/80 text-left rounded-2xl p-5 space-y-2">
+                      <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                        <span className="text-orange-500 font-mono">Q.</span>
+                        {item.q}
+                      </h4>
+                      <p className="text-xs text-slate-400 leading-relaxed pl-5 font-medium">{item.a}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Trust CTA & Newsletter Footer */}
+              <div className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border border-orange-500/20 rounded-3xl p-8 max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-left relative overflow-hidden">
+                <div className="space-y-2 relative z-10">
+                  <h3 className="text-xl font-bold text-white">Never pay retail price ever again.</h3>
+                  <p className="text-xs text-slate-400 max-w-md font-medium">Join over 12,000 smart shoppers using ValueDuel to intercept sales, coupons, and extreme markdown errors instantly.</p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (authToken) {
+                      setView("new");
+                    } else {
+                      setIsAuthModalOpen(true);
+                    }
+                  }}
+                  className="w-full md:w-auto bg-gradient-to-r from-orange-500 to-amber-500 text-white font-extrabold text-xs px-6 py-3.5 rounded-xl hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0 uppercase tracking-wider"
                 >
-                  <LogOut className="w-4 h-4" />
+                  <span>Join ValueDuel Free</span>
+                  <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
-          </aside>
+          )}
 
-          {/* Main workspace */}
-          <main className="flex-1 bg-slate-900 flex flex-col min-w-0">
-            
-            {/* Header / top bar */}
-            <header className="h-16 border-b border-slate-800/60 px-8 flex items-center justify-between bg-slate-950/20">
-              <div className="flex items-center gap-3">
-                <span className="text-slate-500 text-sm">Dashboard</span>
-                <ChevronRight className="w-4 h-4 text-slate-700" />
-                <span className="text-white text-sm font-semibold capitalize">{currentView === "new" ? "New Price Alert" : currentView}</span>
-              </div>
-
-              {/* Ticker of latest action */}
-              <div className="hidden lg:flex items-center gap-2 bg-slate-800/40 px-4 py-1.5 rounded-full border border-slate-800/80 text-xs">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span className="text-slate-300 font-semibold">Live price check interval:</span>
-                <span className="text-emerald-400 font-bold">5-second loop</span>
-              </div>
-            </header>
-
-            {/* View Containers */}
-            <div className="flex-1 overflow-y-auto p-8 max-w-7xl w-full mx-auto space-y-8">
-              
+          {/* Render protected/authenticated views only if token is present */}
+          {(!authToken && ["my-trackers", "trends", "settings", "oracle"].includes(currentView)) ? null : (
+            <>
               {/* --- VIEW: ADD NEW ALERT --- */}
               {currentView === "new" && (
                 <div className="max-w-2xl mx-auto py-12 space-y-12">
@@ -1155,12 +1507,12 @@ export default function App() {
                           value={productUrl}
                           onChange={(e) => setProductUrl(e.target.value)}
                           placeholder="Paste e-commerce product page link here..."
-                          className="flex-1 bg-slate-900 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3.5 px-4 text-sm outline-none transition-all placeholder:text-slate-600"
+                          className="flex-1 bg-slate-900 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3.5 px-4 text-sm outline-none transition-all placeholder:text-slate-600 text-slate-100"
                         />
                         <button 
                           onClick={handleScrapeProduct}
                           disabled={scraping || !productUrl.trim()}
-                          className="bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold px-6 py-3.5 rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                          className="bg-slate-850 hover:bg-slate-800 text-slate-100 font-semibold px-6 py-3.5 rounded-xl border border-slate-750 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                         >
                           {scraping ? (
                             <Loader2 className="w-5 h-5 animate-spin" />
@@ -1173,6 +1525,7 @@ export default function App() {
                         </button>
                       </div>
                     </div>
+
 
                     {/* Scraped Info Panel */}
                     <AnimatePresence>
@@ -3118,10 +3471,10 @@ export default function App() {
 
                 </div>
               )}
-            </div>
-          </main>
+            </>
+          )}
         </div>
-      )}
+      </main>
 
       {/* SECURE CHECKOUT / UPI PAYMENT MODAL */}
       <AnimatePresence>

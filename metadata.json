@@ -1,6 +1,6 @@
 {
-  "name": "AI Price Alert",
-  "description": "An AI-powered e-commerce price tracker with reviews analysis, robust dashboard, real-time analytics, and automated drop alerts.",
+  "name": "ValueDuel",
+  "description": "Premium e-commerce price monitoring, dual-link product comparison, and real-time smart price drop alert platform.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
