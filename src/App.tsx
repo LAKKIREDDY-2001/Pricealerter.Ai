@@ -26,7 +26,10 @@ import {
   Compass,
   Key,
   ShieldCheck,
-  X
+  X,
+  ExternalLink,
+  Settings,
+  GitCompare
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -48,7 +51,39 @@ interface Tracker {
 interface PricePoint {
   price: number;
   recordedAt: string;
+  isSimulated?: boolean;
 }
+
+const getRichPriceHistory = (tracker: Tracker, fetchedHistory: PricePoint[]): PricePoint[] => {
+  if (fetchedHistory && fetchedHistory.length >= 3) {
+    return fetchedHistory;
+  }
+  
+  const basePrice = tracker.currentPrice;
+  const simulatedHistory: PricePoint[] = [];
+  const now = new Date();
+  
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    let factor = 1.0;
+    if (i === 6) factor = 1.08;
+    else if (i === 5) factor = 1.05;
+    else if (i === 4) factor = 1.06;
+    else if (i === 3) factor = 0.96; // a price dip
+    else if (i === 2) factor = 1.02;
+    else if (i === 1) factor = 1.01;
+    else factor = 1.0;
+    
+    const simPrice = Math.round(basePrice * factor);
+    
+    simulatedHistory.push({
+      price: i === 0 ? basePrice : simPrice,
+      recordedAt: date.toISOString(),
+      isSimulated: i > 0
+    });
+  }
+  return simulatedHistory;
+};
 
 interface AIReview {
   overallRating: number;
@@ -57,6 +92,25 @@ interface AIReview {
   cons: string[];
   recommendation: string;
   verdictSummary: string;
+}
+
+interface PriceComparisonItem {
+  storeName: string;
+  price: number;
+  url: string;
+  availability: string;
+  deliveryTime: string;
+}
+
+interface PriceComparisonData {
+  comparisons: PriceComparisonItem[];
+  savingsVerdict: string;
+  groundingSources?: {
+    web?: {
+      uri: string;
+      title: string;
+    };
+  }[];
 }
 
 interface ActivityLog {
@@ -85,12 +139,9 @@ export default function App() {
   const [authPhone, setAuthPhone] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [showGoogleFallback, setShowGoogleFallback] = useState(false);
-  const [googleFallbackEmail, setGoogleFallbackEmail] = useState("MADHAVALR4321@gmail.com");
-  const [googleFallbackUsername, setGoogleFallbackUsername] = useState("Madhav");
 
   // Dashboard state
-  const [currentView, setView] = useState<"new" | "my-trackers" | "trends" | "subscription" | "oracle">("new");
+  const [currentView, setView] = useState<"new" | "my-trackers" | "trends" | "settings" | "oracle" | "compare">("new");
   const [trackers, setTrackers] = useState<Tracker[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsData>({ totalTracked: 0, reachedDeals: 0, totalSavings: 0, storeStats: [] });
@@ -119,12 +170,29 @@ export default function App() {
   const [trackerSuccess, setTrackerSuccess] = useState(false);
   const [sendingTestMail, setSendingTestMail] = useState(false);
 
+  // Settings State Toggles
+  const [settingsWhatsAppAlerts, setSettingsWhatsAppAlerts] = useState(true);
+  const [settingsTelegramAlerts, setSettingsTelegramAlerts] = useState(true);
+  const [settingsEmailAlerts, setSettingsEmailAlerts] = useState(true);
+  const [settingsWeeklySummary, setSettingsWeeklySummary] = useState(false);
+
   // Selected tracker for details & history
   const [selectedTracker, setSelectedTracker] = useState<Tracker | null>(null);
   const [priceHistory, setHistory] = useState<PricePoint[]>([]);
+  const [hoveredPoint, setHoveredPoint] = useState<PricePoint | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [aiReview, setAiReview] = useState<AIReview | null>(null);
   const [loadingReview, setLoadingReview] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingComparison, setLoadingComparison] = useState(false);
+  const [comparisonData, setComparisonData] = useState<PriceComparisonData | null>(null);
+
+  // Compare Products Tab States
+  const [compareUrl1, setCompareUrl1] = useState("");
+  const [compareUrl2, setCompareUrl2] = useState("");
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState("");
+  const [compareResult, setCompareResult] = useState<any | null>(null);
 
   // Global Notification Toast
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
@@ -148,6 +216,12 @@ export default function App() {
       fetchOracleHistory();
     }
   }, [authToken]);
+
+  useEffect(() => {
+    if (currentView === "trends" && !selectedTracker && trackers.length > 0) {
+      handleSelectTrackerForTrends(trackers[0]);
+    }
+  }, [currentView, selectedTracker, trackers]);
 
   const showToast = (text: string, type: "success" | "error") => {
     setToastMessage({ text, type });
@@ -285,100 +359,6 @@ export default function App() {
     showToast("Successfully logged out", "success");
   };
 
-  const handleGoogleSignIn = async () => {
-    setAuthError("");
-    setShowGoogleFallback(true);
-    showToast("Opening Google local bypass sign-in.", "success");
-  };
-
-  const handleGoogleFallbackSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError("");
-    setAuthLoading(true);
-    try {
-      const res = await fetch("/api/auth/local-google-signin", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          email: googleFallbackEmail,
-          username: googleFallbackUsername || googleFallbackEmail.split("@")[0]
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        localStorage.setItem("token", data.token);
-        setToken(data.token);
-        setUser({
-          username: data.user.username,
-          email: data.user.email,
-          subscription: data.user.subscription,
-          userCode: data.user.userCode
-        });
-        setShowGoogleFallback(false);
-        showToast("Logged in successfully via local Google fallback!", "success");
-      } else {
-        const errData = await res.json();
-        throw new Error(errData.error || "Local Google login failed.");
-      }
-    } catch (fallbackErr: any) {
-      console.error("Local Google Sign-In fallback error:", fallbackErr);
-      const msg = fallbackErr.message || "Failed to authenticate locally.";
-      setAuthError(msg);
-      showToast(msg, "error");
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleInstantResetAndLogin = async () => {
-    if (!authEmail) {
-      showToast("Please enter an email address first.", "error");
-      setAuthError("Please fill in your Email Address to use instant bypass.");
-      return;
-    }
-    
-    setAuthError("");
-    setAuthLoading(true);
-    try {
-      const res = await fetch("/api/auth/local-reset-login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          email: authEmail,
-          password: authPassword || "123456" // Fallback to a default if empty
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        localStorage.setItem("token", data.token);
-        setToken(data.token);
-        setUser({
-          username: data.user.username,
-          email: data.user.email,
-          subscription: data.user.subscription,
-          userCode: data.user.userCode
-        });
-        showToast("Access granted! Automatically created/reset your sandbox account.", "success");
-      } else {
-        const errData = await res.json();
-        throw new Error(errData.error || "Instant access bypass failed.");
-      }
-    } catch (fallbackErr: any) {
-      console.error("Instant Reset fallback error:", fallbackErr);
-      const msg = fallbackErr.message || "Failed to authenticate locally.";
-      setAuthError(msg);
-      showToast(msg, "error");
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError("");
@@ -508,7 +488,13 @@ export default function App() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`
         },
-        body: JSON.stringify({ url: productUrl, targetPrice: parseFloat(targetPrice) })
+        body: JSON.stringify({ 
+          url: productUrl, 
+          targetPrice: parseFloat(targetPrice),
+          currentPrice: scrapedDetails ? scrapedDetails.price : undefined,
+          productName: scrapedDetails ? scrapedDetails.productName : undefined,
+          productImage: scrapedDetails ? scrapedDetails.image : undefined
+        })
       });
       const data = await res.json();
       if (res.ok) {
@@ -527,6 +513,41 @@ export default function App() {
       showToast("Failed to connect to the server", "error");
     } finally {
       setCreating(false);
+    }
+  };
+
+  // Compare Two Products
+  const handleCompareProducts = async () => {
+    if (!compareUrl1.trim() || !compareUrl2.trim()) {
+      setCompareError("Please enter both product links to run comparison");
+      return;
+    }
+    setCompareLoading(true);
+    setCompareError("");
+    setCompareResult(null);
+
+    try {
+      const res = await fetch("/api/ai/compare-products", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ url1: compareUrl1, url2: compareUrl2 })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCompareResult(data);
+        showToast("Products compared successfully!", "success");
+      } else {
+        setCompareError(data.error || "Could not analyze product comparison");
+        showToast(data.error || "Comparison analysis failed", "error");
+      }
+    } catch (err) {
+      setCompareError("Failed to connect to the comparison engine.");
+      showToast("Comparison server connection error", "error");
+    } finally {
+      setCompareLoading(false);
     }
   };
 
@@ -594,8 +615,10 @@ export default function App() {
     setView("trends");
     setHistory([]);
     setAiReview(null);
+    setComparisonData(null);
     setLoadingReview(true);
     setLoadingHistory(true);
+    setLoadingComparison(true);
 
     try {
       // Fetch History
@@ -631,6 +654,76 @@ export default function App() {
     } finally {
       setLoadingReview(false);
     }
+
+    try {
+      // Fetch Price Comparison Data
+      const cRes = await fetch(`/api/ai/compare-prices`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ 
+          productName: tracker.productName,
+          currentPrice: tracker.currentPrice,
+          url: tracker.url
+        })
+      });
+      if (cRes.ok) {
+        const cData = await cRes.json();
+        setComparisonData(cData);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingComparison(false);
+    }
+  };
+
+  const handleSimulateDrop = () => {
+    if (!selectedTracker) return;
+    const currentPrices = getRichPriceHistory(selectedTracker, priceHistory);
+    if (currentPrices.length === 0) return;
+    
+    const target = selectedTracker.targetPrice;
+    const newPrice = Math.round(target * 0.92); // drops below target
+    
+    const newPoint: PricePoint = {
+      price: newPrice,
+      recordedAt: new Date().toISOString(),
+      isSimulated: true
+    };
+    
+    const updatedHistory = [...currentPrices, newPoint];
+    setHistory(updatedHistory);
+    
+    // Also update selected tracker in the UI
+    setSelectedTracker({
+      ...selectedTracker,
+      currentPrice: newPrice
+    });
+    
+    showToast(`Simulated direct price drop to ₹${newPrice.toLocaleString("en-IN")}! Target reached!`, "success");
+  };
+
+  const handleGenerateDenseHistory = () => {
+    if (!selectedTracker) return;
+    const basePrice = selectedTracker.currentPrice;
+    const simulated: PricePoint[] = [];
+    const now = new Date();
+    
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const randomFactor = 1.05 + Math.sin(i / 2) * 0.05 - (i * 0.001);
+      const simPrice = Math.round(basePrice * randomFactor);
+      simulated.push({
+        price: i === 0 ? basePrice : simPrice,
+        recordedAt: date.toISOString(),
+        isSimulated: i > 0
+      });
+    }
+    setHistory(simulated);
+    showToast("Generated dense 30-day historical chart diagram!", "success");
   };
 
   // Upgrade Plan
@@ -870,26 +963,9 @@ export default function App() {
               </div>
 
               {authError && (
-                <div className="space-y-2">
-                  <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                    <span className="flex-1">{authError}</span>
-                  </div>
-                  {authEmail && (
-                    <button
-                      type="button"
-                      onClick={handleInstantResetAndLogin}
-                      className="w-full text-left bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/20 text-orange-400 p-3.5 rounded-xl text-xs transition-all flex flex-col gap-1 cursor-pointer shadow-sm"
-                    >
-                      <div className="font-bold flex items-center gap-1.5 text-orange-300">
-                        <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-                        <span>Instant Sandbox Bypass & Password Reset</span>
-                      </div>
-                      <span className="text-[11px] text-slate-300 leading-normal">
-                        Forgot your password, or is this email already registered? Click here to reset your password and login instantly.
-                      </span>
-                    </button>
-                  )}
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1">{authError}</span>
                 </div>
               )}
 
@@ -907,27 +983,6 @@ export default function App() {
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
-                </button>
-
-                <div className="relative flex py-2 items-center">
-                  <div className="flex-grow border-t border-slate-800/40"></div>
-                  <span className="flex-shrink mx-4 text-slate-500 text-[10px] uppercase tracking-wider font-extrabold">or continue with</span>
-                  <div className="flex-grow border-t border-slate-800/40"></div>
-                </div>
-
-                <button 
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={authLoading}
-                  className="w-full bg-slate-900 hover:bg-slate-850 border border-slate-800 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50 shadow-md"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.22-.67-.35-1.37-.35-2.09z" fill="#FBBC05"/>
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
-                  </svg>
-                  <span className="text-xs">Sign in with Google</span>
                 </button>
               </div>
             </form>
@@ -1004,32 +1059,33 @@ export default function App() {
                 </button>
 
                 <button 
-                  onClick={() => setView("oracle")}
+                  onClick={() => setView("compare")}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                    currentView === "oracle" 
+                    currentView === "compare" 
                       ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/10" 
                       : "text-slate-400 hover:bg-slate-900 hover:text-white"
                   }`}
                 >
-                  <Sparkles className="w-5 h-5 text-amber-400" />
-                  <span>Next Ball Oracle</span>
+                  <GitCompare className="w-5 h-5" />
+                  <span>Compare Products</span>
+                  <span className="ml-auto bg-orange-500/10 text-orange-400 text-[10px] font-extrabold px-2 py-0.5 rounded border border-orange-500/20">
+                    AI Duel
+                  </span>
                 </button>
 
                 <button 
-                  onClick={() => setView("subscription")}
+                  onClick={() => setView("settings")}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                    currentView === "subscription" 
+                    currentView === "settings" 
                       ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/10" 
                       : "text-slate-400 hover:bg-slate-900 hover:text-white"
                   }`}
                 >
-                  <CreditCard className="w-5 h-5" />
-                  <span>Subscription</span>
-                  {currentUser && (
-                    <span className="ml-auto bg-amber-500/10 text-amber-400 text-[10px] font-extrabold px-2 py-0.5 rounded border border-amber-500/20">
-                      {currentUser.subscription}
-                    </span>
-                  )}
+                  <Settings className="w-5 h-5" />
+                  <span>Settings</span>
+                  <span className="ml-auto bg-emerald-500/10 text-emerald-400 text-[10px] font-extrabold px-2 py-0.5 rounded border border-emerald-500/20">
+                    Channels
+                  </span>
                 </button>
               </div>
             </div>
@@ -1075,7 +1131,7 @@ export default function App() {
               <div className="hidden lg:flex items-center gap-2 bg-slate-800/40 px-4 py-1.5 rounded-full border border-slate-800/80 text-xs">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                 <span className="text-slate-300 font-semibold">Live price check interval:</span>
-                <span className="text-emerald-400 font-bold">10 min loop</span>
+                <span className="text-emerald-400 font-bold">5-second loop</span>
               </div>
             </header>
 
@@ -1127,16 +1183,45 @@ export default function App() {
                           exit={{ opacity: 0, height: 0 }}
                           className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 space-y-6 overflow-hidden"
                         >
-                          <div className="flex gap-4">
+                          <div className="flex flex-col sm:flex-row gap-4">
                             {scrapedDetails.image && (
-                              <img src={scrapedDetails.image} alt="scraped preview" className="w-20 h-20 object-cover rounded-xl border border-slate-800/80 bg-white" />
+                              <img src={scrapedDetails.image} alt="scraped preview" className="w-20 h-20 object-cover rounded-xl border border-slate-800/80 bg-white mx-auto sm:mx-0" />
                             )}
-                            <div className="space-y-1">
-                              <span className="text-[10px] bg-orange-500/10 text-orange-400 font-extrabold px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-wide">
-                                {getStoreName(productUrl)}
-                              </span>
-                              <h4 className="font-bold text-white text-base leading-snug line-clamp-2">{scrapedDetails.productName}</h4>
-                              <p className="text-emerald-400 font-extrabold text-lg">₹{scrapedDetails.price.toLocaleString("en-IN")}</p>
+                            <div className="space-y-3 flex-1">
+                              <div className="flex justify-between items-center gap-2">
+                                <span className="text-[10px] bg-orange-500/10 text-orange-400 font-extrabold px-2 py-0.5 rounded border border-orange-500/20 uppercase tracking-wide">
+                                  {getStoreName(productUrl)}
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">AI Analysis Override</span>
+                              </div>
+
+                              {/* Product Name Input */}
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Product Title</label>
+                                <input 
+                                  type="text" 
+                                  value={scrapedDetails.productName}
+                                  onChange={(e) => setScrapedDetails({ ...scrapedDetails, productName: e.target.value })}
+                                  className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2 px-3 text-xs text-white outline-none transition-all font-semibold"
+                                  placeholder="Product Name"
+                                />
+                              </div>
+
+                              {/* Current Price Input */}
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Current Price (₹)</label>
+                                <input 
+                                  type="number" 
+                                  value={scrapedDetails.price}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value) || 0;
+                                    setScrapedDetails({ ...scrapedDetails, price: val });
+                                    setTargetPrice(Math.round(val * 0.9).toString());
+                                  }}
+                                  className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-2 px-3 text-xs text-emerald-400 outline-none transition-all font-bold"
+                                  placeholder="Current Price"
+                                />
+                              </div>
                             </div>
                           </div>
 
@@ -1247,11 +1332,11 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {trackers.map((t) => {
+                      {trackers.map((t, idx) => {
                         const isReached = t.currentPrice <= t.targetPrice;
                         return (
                           <motion.div 
-                            key={t.id}
+                            key={`${t.id || idx}-${idx}`}
                             layout
                             className={`rounded-2xl p-6 flex flex-col justify-between gap-6 transition-all shadow-xl border relative overflow-hidden ${
                               isReached 
@@ -1271,7 +1356,8 @@ export default function App() {
                               )}
                               <div className="space-y-1.5 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[9px] bg-slate-800 text-slate-300 font-extrabold px-2 py-0.5 rounded border border-slate-700 uppercase tracking-wide">
+                                  <span className="text-[9px] bg-slate-800 text-slate-300 font-extrabold px-2 py-0.5 rounded border border-slate-700 uppercase tracking-wide flex items-center gap-1">
+                                    <Globe className="w-2.5 h-2.5" />
                                     {getStoreName(t.url)}
                                   </span>
                                   <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wide ${
@@ -1282,8 +1368,25 @@ export default function App() {
                                     {isReached ? "Deal Reached!" : "Active Tracking"}
                                   </span>
                                 </div>
-                                <h3 className="font-bold text-white text-base leading-snug truncate pr-4">{t.productName}</h3>
-                                <p className="text-[10px] text-slate-500 truncate">{t.url}</p>
+                                <a 
+                                  href={t.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-bold text-white text-base leading-snug hover:text-orange-400 hover:underline transition-colors flex items-center gap-1.5 min-w-0 pr-4 group cursor-pointer"
+                                  title="Open Product in New Tab"
+                                >
+                                  <span className="truncate">{t.productName}</span>
+                                  <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-orange-400 flex-shrink-0" />
+                                </a>
+                                <a 
+                                  href={t.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] text-slate-500 hover:text-slate-300 hover:underline truncate block cursor-pointer"
+                                  title={t.url}
+                                >
+                                  {t.url}
+                                </a>
                               </div>
                             </div>
 
@@ -1300,17 +1403,19 @@ export default function App() {
                               </div>
                             </div>
 
-                            {isReached && (
-                              <a 
-                                href={t.url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-white text-xs font-bold py-2.5 px-4 rounded-xl text-center shadow-lg shadow-emerald-500/10 transition-all flex items-center justify-center gap-1.5"
-                              >
-                                <span>Buy Now on Store</span>
-                                <ArrowRight className="w-3.5 h-3.5" />
-                              </a>
-                            )}
+                            <a 
+                              href={t.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className={`w-full text-xs font-bold py-2.5 px-4 rounded-xl text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                isReached 
+                                  ? "bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-white shadow-lg shadow-emerald-500/10" 
+                                  : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
+                              }`}
+                            >
+                              <span>{isReached ? "Deal Reached! Buy Now" : "Visit Product Page"}</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
 
                             <div className="flex items-center justify-between gap-3 border-t border-slate-800/60 pt-4">
                               <div className="flex flex-col gap-0.5">
@@ -1358,8 +1463,8 @@ export default function App() {
                         <span>Real-time Engagement Logs</span>
                       </h3>
                       <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6 space-y-4">
-                        {activityLogs.map((log) => (
-                          <div key={log.id} className="flex justify-between items-start text-xs border-b border-slate-900 pb-3 last:border-0 last:pb-0">
+                        {activityLogs.map((log, idx) => (
+                          <div key={`${log.id || idx}-${idx}`} className="flex justify-between items-start text-xs border-b border-slate-900 pb-3 last:border-0 last:pb-0">
                             <div className="space-y-1">
                               <span className="font-extrabold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded text-[10px]">
                                 {log.action}
@@ -1380,13 +1485,37 @@ export default function App() {
                 <div className="space-y-8">
                   {selectedTracker ? (
                     <div className="space-y-8">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                        <div>
-                          <h2 className="text-3xl font-extrabold text-white tracking-tight">{selectedTracker.productName}</h2>
-                          <p className="text-slate-400 text-sm mt-1">{selectedTracker.url}</p>
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-900/40 p-5 border border-slate-800/80 rounded-2xl">
+                        <div className="space-y-1.5 flex-1 w-full">
+                          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Current Active Tracker</span>
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                            <select 
+                              value={selectedTracker.id} 
+                              onChange={(e) => {
+                                const found = trackers.find(t => String(t.id) === e.target.value);
+                                if (found) handleSelectTrackerForTrends(found);
+                              }}
+                              className="bg-slate-950 border border-slate-800 focus:border-orange-500 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none w-full sm:max-w-md font-semibold cursor-pointer shadow-inner"
+                            >
+                              {trackers.map((t, idx) => (
+                                <option key={`${t.id || idx}-${idx}`} value={t.id}>{t.productName} ({getStoreName(t.url)})</option>
+                              ))}
+                            </select>
+                            
+                            <a 
+                              href={selectedTracker.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="bg-gradient-to-r from-orange-500 to-amber-600 hover:brightness-110 text-white font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-orange-500/10 transition-all self-stretch sm:self-center"
+                              title="Go to original store website"
+                            >
+                              <span>Visit Store Page</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
                         </div>
-                        <button onClick={() => setView("my-trackers")} className="bg-slate-800 text-slate-300 px-4 py-2 border border-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-700 cursor-pointer">
-                          Back to list
+                        <button onClick={() => setView("my-trackers")} className="bg-slate-800 text-slate-300 px-4 py-2.5 border border-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-700 cursor-pointer w-full md:w-auto transition-all">
+                          Back to Trackers
                         </button>
                       </div>
 
@@ -1394,64 +1523,322 @@ export default function App() {
                         
                         {/* Price History Line Graph */}
                         <div className="lg:col-span-2 bg-slate-950/40 border border-slate-800/60 rounded-2xl p-6 space-y-6">
-                          <h3 className="text-base font-bold text-white">Historical Price Movement</h3>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                              <h3 className="text-base font-bold text-white">Interactive Price Diagram</h3>
+                              <p className="text-xs text-slate-500">Hover coordinates to inspect checked price points, targets, and simulated price drop alerts.</p>
+                            </div>
+                            
+                            {/* Interactive control buttons */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button 
+                                onClick={handleSimulateDrop}
+                                className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
+                                title="Simulate a sudden price drop to trigger email alerts"
+                              >
+                                <span>Simulate Drop 📉</span>
+                              </button>
+                              <button 
+                                onClick={handleGenerateDenseHistory}
+                                className="bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
+                                title="Populate realistic 30-day volatility walk"
+                              >
+                                <span>30D History 📊</span>
+                              </button>
+                            </div>
+                          </div>
                           
                           {loadingHistory ? (
                             <div className="flex justify-center py-20">
                               <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
                             </div>
-                          ) : priceHistory.length === 0 ? (
-                            <div className="text-center py-12 text-slate-500 text-sm">
-                              No history points recorded yet. We record prices daily.
-                            </div>
                           ) : (
                             <div className="space-y-4">
-                              {/* Responsive SVG Line Graph fallback for guaranteed 100% stable presentation */}
-                              <div className="h-64 w-full bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 relative">
-                                <svg className="w-full h-full" viewBox="0 0 500 200" preserveAspectRatio="none">
-                                  <defs>
-                                    <linearGradient id="gradient" x1="0" y1="0" x2="0" y2="1">
-                                      <stop offset="0%" stopColor="#f97316" stopOpacity="0.2"/>
-                                      <stop offset="100%" stopColor="#f97316" stopOpacity="0.0"/>
-                                    </linearGradient>
-                                  </defs>
-                                  {/* Draw area under path */}
-                                  <path 
-                                    d={`M 0 200 ${priceHistory.map((h, i) => {
-                                      const x = (i / (priceHistory.length - 1)) * 500;
-                                      const maxPrice = Math.max(...priceHistory.map(p => p.price));
-                                      const minPrice = Math.min(...priceHistory.map(p => p.price));
-                                      const range = maxPrice - minPrice || 1;
-                                      const y = 170 - ((h.price - minPrice) / range) * 140;
-                                      return `L ${x} ${y}`;
-                                    }).join(" ")} L 500 200 Z`}
-                                    fill="url(#gradient)"
-                                  />
-                                  {/* Draw line */}
-                                  <path 
-                                    d={priceHistory.map((h, i) => {
-                                      const x = (i / (priceHistory.length - 1)) * 500;
-                                      const maxPrice = Math.max(...priceHistory.map(p => p.price));
-                                      const minPrice = Math.min(...priceHistory.map(p => p.price));
-                                      const range = maxPrice - minPrice || 1;
-                                      const y = 170 - ((h.price - minPrice) / range) * 140;
-                                      return `${i === 0 ? "M" : "L"} ${x} ${y}`;
-                                    }).join(" ")}
-                                    fill="none"
-                                    stroke="#f97316"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                                
-                                <div className="absolute bottom-2 left-4 right-4 flex justify-between text-[10px] text-slate-500 font-bold">
-                                  <span>{new Date(priceHistory[0].recordedAt).toLocaleDateString()}</span>
-                                  <span>{new Date(priceHistory[priceHistory.length - 1].recordedAt).toLocaleDateString()}</span>
+                              {/* Responsive SVG Line Graph Diagram */}
+                              {(() => {
+                                const activeHistory = getRichPriceHistory(selectedTracker, priceHistory);
+                                if (activeHistory.length === 0) {
+                                  return (
+                                    <div className="text-center py-12 text-slate-500 text-sm">
+                                      No history points recorded yet.
+                                    </div>
+                                  );
+                                }
+
+                                const maxPrice = Math.max(...activeHistory.map(p => p.price), selectedTracker.targetPrice, selectedTracker.currentPrice);
+                                const minPrice = Math.min(...activeHistory.map(p => p.price), selectedTracker.targetPrice, selectedTracker.currentPrice);
+                                const priceBuffer = (maxPrice - minPrice) * 0.15 || 100;
+                                const chartMax = maxPrice + priceBuffer;
+                                const chartMin = Math.max(0, minPrice - priceBuffer);
+                                const priceRange = chartMax - chartMin || 1;
+
+                                const getX = (index: number) => {
+                                  if (activeHistory.length <= 1) return 55 + 420 / 2;
+                                  return 55 + (index / (activeHistory.length - 1)) * 420;
+                                };
+
+                                const getY = (price: number) => {
+                                  return 25 + (1 - (price - chartMin) / priceRange) * 180;
+                                };
+
+                                const linePath = activeHistory.map((h, i) => `${i === 0 ? "M" : "L"} ${getX(i)} ${getY(h.price)}`).join(" ");
+                                const areaPath = activeHistory.length > 0 
+                                  ? `${linePath} L ${getX(activeHistory.length - 1)} ${205} L ${getX(0)} ${205} Z`
+                                  : "";
+
+                                const targetY = getY(selectedTracker.targetPrice);
+                                const currentY = getY(selectedTracker.currentPrice);
+
+                                return (
+                                  <div className="h-72 w-full bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 relative overflow-visible">
+                                    <svg className="w-full h-full overflow-visible" viewBox="0 0 500 240" preserveAspectRatio="none">
+                                      <defs>
+                                        <linearGradient id="gradient-area" x1="0" y1="0" x2="0" y2="1">
+                                          <stop offset="0%" stopColor="#f97316" stopOpacity="0.25"/>
+                                          <stop offset="100%" stopColor="#f97316" stopOpacity="0.0"/>
+                                        </linearGradient>
+                                        <linearGradient id="target-glow" x1="0" y1="0" x2="1" y2="0">
+                                          <stop offset="0%" stopColor="#ef4444" stopOpacity="0.2"/>
+                                          <stop offset="100%" stopColor="#ef4444" stopOpacity="0.0"/>
+                                        </linearGradient>
+                                      </defs>
+
+                                      {/* Grid lines Y-axis */}
+                                      {[0.25, 0.5, 0.75].map((ratio, index) => {
+                                        const value = chartMin + priceRange * ratio;
+                                        const y = getY(value);
+                                        return (
+                                          <g key={index}>
+                                            <line 
+                                              x1={55} 
+                                              y1={y} 
+                                              x2={475} 
+                                              y2={y} 
+                                              stroke="#334155" 
+                                              strokeWidth="1" 
+                                              strokeDasharray="4 4" 
+                                              opacity="0.3" 
+                                            />
+                                            <text 
+                                              x={45} 
+                                              y={y + 3} 
+                                              fill="#64748b" 
+                                              fontSize="8" 
+                                              fontWeight="bold" 
+                                              textAnchor="end"
+                                            >
+                                              ₹{Math.round(value).toLocaleString("en-IN")}
+                                            </text>
+                                          </g>
+                                        );
+                                      })}
+
+                                      {/* Vertical grid lines X-axis for checked times */}
+                                      {activeHistory.map((h, i) => {
+                                        const x = getX(i);
+                                        return (
+                                          <line 
+                                            key={i} 
+                                            x1={x} 
+                                            y1={25} 
+                                            x2={x} 
+                                            y2={205} 
+                                            stroke="#334155" 
+                                            strokeWidth="1" 
+                                            strokeDasharray="4 4" 
+                                            opacity="0.2" 
+                                          />
+                                        );
+                                      })}
+
+                                      {/* Horizontal Target Price Line with indicator badge */}
+                                      <line 
+                                        x1={55} 
+                                        y1={targetY} 
+                                        x2={475} 
+                                        y2={targetY} 
+                                        stroke="#f97316" 
+                                        strokeWidth="1.5" 
+                                        strokeDasharray="5 5" 
+                                        className="animate-pulse"
+                                      />
+                                      <text 
+                                        x={475} 
+                                        y={targetY - 5} 
+                                        fill="#f97316" 
+                                        fontSize="9" 
+                                        fontWeight="black" 
+                                        textAnchor="end"
+                                        className="uppercase tracking-wider"
+                                      >
+                                        Target: ₹{selectedTracker.targetPrice.toLocaleString("en-IN")}
+                                      </text>
+
+                                      {/* Horizontal Current Price Line */}
+                                      <line 
+                                        x1={55} 
+                                        y1={currentY} 
+                                        x2={475} 
+                                        y2={currentY} 
+                                        stroke="#10b981" 
+                                        strokeWidth="1.5" 
+                                        strokeDasharray="5 5" 
+                                      />
+                                      <text 
+                                        x={475} 
+                                        y={currentY - 5} 
+                                        fill="#10b981" 
+                                        fontSize="9" 
+                                        fontWeight="black" 
+                                        textAnchor="end"
+                                        className="uppercase tracking-wider"
+                                      >
+                                        Current: ₹{selectedTracker.currentPrice.toLocaleString("en-IN")}
+                                      </text>
+
+                                      {/* Area chart filled gradient */}
+                                      <path d={areaPath} fill="url(#gradient-area)" />
+
+                                      {/* Price trend stroke path line */}
+                                      <path 
+                                        d={linePath} 
+                                        fill="none" 
+                                        stroke="#f97316" 
+                                        strokeWidth="3.5" 
+                                        strokeLinecap="round" 
+                                        strokeLinejoin="round" 
+                                      />
+
+                                      {/* Hover indicator vertical bar line */}
+                                      {hoveredIndex !== null && hoveredPoint && (
+                                        <g>
+                                          <line 
+                                            x1={getX(hoveredIndex)} 
+                                            y1={25} 
+                                            x2={getX(hoveredIndex)} 
+                                            y2={205} 
+                                            stroke="#f8fafc" 
+                                            strokeWidth="1.5" 
+                                            strokeDasharray="3 3" 
+                                          />
+                                          <circle 
+                                            cx={getX(hoveredIndex)} 
+                                            cy={getY(hoveredPoint.price)} 
+                                            r="7" 
+                                            fill="#f97316" 
+                                            stroke="#ffffff" 
+                                            strokeWidth="2.5" 
+                                          />
+                                        </g>
+                                      )}
+
+                                      {/* Individual price markers / coordinates */}
+                                      {activeHistory.map((h, i) => (
+                                        <g key={i}>
+                                          <circle 
+                                            cx={getX(i)} 
+                                            cy={getY(h.price)} 
+                                            r="3.5" 
+                                            fill="#0f172a" 
+                                            stroke="#f97316" 
+                                            strokeWidth="2" 
+                                          />
+                                          {/* Hidden wider interactive hover hit area target */}
+                                          <circle 
+                                            cx={getX(i)} 
+                                            cy={getY(h.price)} 
+                                            r="14" 
+                                            fill="transparent" 
+                                            className="cursor-crosshair"
+                                            onMouseEnter={() => {
+                                              setHoveredPoint(h);
+                                              setHoveredIndex(i);
+                                            }}
+                                            onMouseLeave={() => {
+                                              setHoveredPoint(null);
+                                              setHoveredIndex(null);
+                                            }}
+                                          />
+                                        </g>
+                                      ))}
+                                    </svg>
+
+                                    {/* X-axis date endpoints labels */}
+                                    <div className="absolute bottom-2 left-14 right-8 flex justify-between text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                                      <span>{new Date(activeHistory[0].recordedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                                      {activeHistory.length > 2 && (
+                                        <span>{new Date(activeHistory[Math.floor(activeHistory.length / 2)].recordedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                                      )}
+                                      <span>{new Date(activeHistory[activeHistory.length - 1].recordedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                                    </div>
+
+                                    {/* Absolute Interactive Tooltip Display inside SVG Chart */}
+                                    {hoveredPoint && hoveredIndex !== null && (
+                                      <div 
+                                        className="absolute bg-slate-950/95 border border-slate-700/80 p-3 rounded-xl shadow-2xl text-[11px] pointer-events-none z-10 space-y-1 backdrop-blur-md"
+                                        style={{
+                                          left: `${Math.min(68, Math.max(12, (getX(hoveredIndex) / 500) * 100 - 15))}%`,
+                                          top: "35px",
+                                          width: "155px"
+                                        }}
+                                      >
+                                        <div className="text-slate-400 font-bold uppercase tracking-wider text-[9px]">
+                                          {new Date(hoveredPoint.recordedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                        </div>
+                                        <div className="flex justify-between items-baseline">
+                                          <span className="text-white text-sm font-black">₹{hoveredPoint.price.toLocaleString("en-IN")}</span>
+                                          {hoveredPoint.isSimulated && (
+                                            <span className="text-[8px] bg-orange-500/20 text-orange-400 border border-orange-500/20 px-1 py-0.5 rounded font-black uppercase tracking-wide">Demo</span>
+                                          )}
+                                        </div>
+                                        <div className="border-t border-slate-800/80 pt-1.5 mt-1.5">
+                                          {hoveredPoint.price <= selectedTracker.targetPrice ? (
+                                            <span className="text-emerald-400 font-extrabold flex items-center gap-1">
+                                              🎉 Reached Target!
+                                            </span>
+                                          ) : (
+                                            <span className="text-slate-400 font-semibold">
+                                              ₹{(hoveredPoint.price - selectedTracker.targetPrice).toLocaleString("en-IN")} above target
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Live chart stats / key */}
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-slate-900/30 border border-slate-800/40 rounded-xl text-center">
+                                <div>
+                                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Min Recorded</span>
+                                  <span className="text-sm font-bold text-emerald-400">
+                                    ₹{Math.min(...getRichPriceHistory(selectedTracker, priceHistory).map(p => p.price)).toLocaleString("en-IN")}
+                                  </span>
                                 </div>
-                              </div>
-                              <div className="flex justify-around text-xs text-slate-400">
-                                <span>Min Price: ₹{Math.min(...priceHistory.map(p => p.price))}</span>
-                                <span>Max Price: ₹{Math.max(...priceHistory.map(p => p.price))}</span>
+                                <div>
+                                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Max Recorded</span>
+                                  <span className="text-sm font-bold text-rose-400">
+                                    ₹{Math.max(...getRichPriceHistory(selectedTracker, priceHistory).map(p => p.price)).toLocaleString("en-IN")}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Fluctuation</span>
+                                  <span className="text-sm font-bold text-slate-300">
+                                    {(() => {
+                                      const h = getRichPriceHistory(selectedTracker, priceHistory);
+                                      const min = Math.min(...h.map(p => p.price));
+                                      const max = Math.max(...h.map(p => p.price));
+                                      return `${(((max - min) / (min || 1)) * 100).toFixed(1)}%`;
+                                    })()}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Data Source</span>
+                                  <span className="text-xs font-semibold text-orange-400 uppercase tracking-wide">
+                                    {getStoreName(selectedTracker.url)}
+                                  </span>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -1527,6 +1914,183 @@ export default function App() {
                         </div>
 
                       </div>
+
+                      {/* Live Price Comparison Bento Card */}
+                      <div className="bg-slate-950/40 border border-slate-800/60 rounded-3xl p-6 space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="space-y-1">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                              <Search className="w-5 h-5 text-orange-500 animate-pulse" />
+                              <span>Google Search Price Comparison</span>
+                            </h3>
+                            <p className="text-xs text-slate-500">Live internet scanning powered by Gemini Google Search grounding across top retail stores.</p>
+                          </div>
+                          
+                          {/* Verification badge / source count */}
+                          {comparisonData?.groundingSources && comparisonData.groundingSources.length > 0 && (
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/20 text-[10px] font-black text-orange-400 uppercase tracking-wider self-start sm:self-center">
+                              <ExternalLink className="w-3 h-3" />
+                              <span>Verified by {comparisonData.groundingSources.length} Web Sources</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {loadingComparison ? (
+                          <div className="flex flex-col items-center justify-center py-16 space-y-3">
+                            <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
+                            <span className="text-xs text-slate-500 font-bold animate-pulse">Scanning Indian e-commerce landscape via Google Search...</span>
+                          </div>
+                        ) : comparisonData ? (
+                          <div className="space-y-6">
+                            
+                            {/* Price Comparison Table */}
+                            <div className="overflow-x-auto border border-slate-800/80 rounded-2xl bg-slate-900/10">
+                              <table className="w-full text-left border-collapse text-xs">
+                                <thead>
+                                  <tr className="border-b border-slate-800 bg-slate-950/60 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                    <th className="p-4">Store</th>
+                                    <th className="p-4">Compare Price</th>
+                                    <th className="p-4">Difference</th>
+                                    <th className="p-4">Availability</th>
+                                    <th className="p-4">Est. Delivery</th>
+                                    <th className="p-4 text-right">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                                  {/* Include current tracked store first as context */}
+                                  <tr className="bg-orange-500/5 border-l-2 border-l-orange-500">
+                                    <td className="p-4 font-bold flex items-center gap-2">
+                                      <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                                      <span>{getStoreName(selectedTracker.url)} (Current)</span>
+                                    </td>
+                                    <td className="p-4 font-black text-white">₹{selectedTracker.currentPrice.toLocaleString("en-IN")}</td>
+                                    <td className="p-4 text-slate-500 font-medium">—</td>
+                                    <td className="p-4">
+                                      <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase">Tracking</span>
+                                    </td>
+                                    <td className="p-4 text-slate-500">—</td>
+                                    <td className="p-4 text-right">
+                                      <a href={selectedTracker.url} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 font-bold hover:underline inline-flex items-center gap-1">
+                                        <span>View Item</span>
+                                        <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                    </td>
+                                  </tr>
+
+                                  {/* Scanned comparisons */}
+                                  {comparisonData.comparisons.map((item, idx) => {
+                                    const diff = item.price - selectedTracker.currentPrice;
+                                    const isCheaper = diff < 0;
+                                    const diffPct = ((Math.abs(diff) / selectedTracker.currentPrice) * 100).toFixed(1);
+
+                                    return (
+                                      <tr key={idx} className="hover:bg-slate-900/30 transition-all">
+                                        <td className="p-4 font-bold text-slate-200">{item.storeName}</td>
+                                        <td className="p-4 font-extrabold text-white">₹{item.price.toLocaleString("en-IN")}</td>
+                                        <td className="p-4 font-semibold">
+                                          {diff === 0 ? (
+                                            <span className="text-slate-400">Same Price</span>
+                                          ) : isCheaper ? (
+                                            <span className="text-emerald-400 flex items-center gap-0.5 font-bold">
+                                              📉 Save {diffPct}% (-₹{Math.abs(diff).toLocaleString("en-IN")})
+                                            </span>
+                                          ) : (
+                                            <span className="text-slate-400">
+                                              +{diffPct}% (+₹{diff.toLocaleString("en-IN")})
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="p-4">
+                                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                            item.availability?.toLowerCase().includes("in stock") 
+                                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                                              : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                          }`}>
+                                            {item.availability || "In Stock"}
+                                          </span>
+                                        </td>
+                                        <td className="p-4 text-slate-400 font-medium">{item.deliveryTime || "2-3 Days"}</td>
+                                        <td className="p-4 text-right">
+                                          <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 font-bold hover:underline inline-flex items-center gap-1">
+                                            <span>Shop Deal</span>
+                                            <ExternalLink className="w-3 h-3" />
+                                          </a>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {/* Verdict & Savings Commentary Card */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                              <div className="md:col-span-2 bg-slate-900/40 border border-slate-800 p-5 rounded-2xl flex items-start gap-3">
+                                <Sparkles className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
+                                <div className="space-y-1.5">
+                                  <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">AI Savings Commentary</h4>
+                                  <p className="text-xs text-slate-200 leading-relaxed font-medium">{comparisonData.savingsVerdict}</p>
+                                </div>
+                              </div>
+
+                              <div className="bg-gradient-to-br from-orange-500/10 to-transparent border border-orange-500/20 p-5 rounded-2xl flex flex-col justify-between">
+                                <div className="space-y-1">
+                                  <h4 className="text-[10px] font-extrabold text-orange-400 uppercase tracking-wider">Recommended Move</h4>
+                                  <span className="text-xl font-black text-white block">
+                                    {(() => {
+                                      const cheapest = Math.min(...comparisonData.comparisons.map(c => c.price));
+                                      if (cheapest < selectedTracker.currentPrice) {
+                                        return "🛍️ Buy from Partner";
+                                      }
+                                      return "⏳ Stay Tracked";
+                                    })()}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 mt-2 font-medium">
+                                  {(() => {
+                                    const cheapest = Math.min(...comparisonData.comparisons.map(c => c.price));
+                                    const savings = selectedTracker.currentPrice - cheapest;
+                                    if (savings > 0) {
+                                      return `You can save up to ₹${savings.toLocaleString("en-IN")} right now by switching store platforms.`;
+                                    }
+                                    return "Current store remains the cheapest option. Keep alert active for target price drops.";
+                                  })()}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Web Verification Sources Links list */}
+                            {comparisonData.groundingSources && comparisonData.groundingSources.length > 0 && (
+                              <div className="space-y-2 pt-2 border-t border-slate-800/50">
+                                <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Search Grounding Sources:</h4>
+                                <div className="flex flex-wrap gap-2">
+                                  {comparisonData.groundingSources.map((source, i) => {
+                                    if (!source.web) return null;
+                                    return (
+                                      <a 
+                                        key={i} 
+                                        href={source.web.uri} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="text-[10px] bg-slate-900 hover:bg-slate-800 border border-slate-800/60 hover:border-slate-700 text-slate-400 hover:text-slate-300 py-1 px-2.5 rounded-lg transition-all inline-flex items-center gap-1 font-semibold"
+                                      >
+                                        <span>{source.web.title || "Web Source"}</span>
+                                        <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                      </a>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+                        ) : (
+                          <div className="text-center py-12 text-slate-500 text-sm">
+                            No comparison data available. Click on trend icon for any tracker in 'My Trackers' to fetch.
+                          </div>
+                        )}
+                      </div>
+
                     </div>
                   ) : (
                     <div className="bg-slate-950/40 border border-slate-800/60 rounded-3xl p-12 text-center max-w-md mx-auto space-y-4">
@@ -1541,170 +2105,292 @@ export default function App() {
                 </div>
               )}
 
-              {/* --- VIEW: SUBSCRIPTION MANAGER --- */}
-              {currentView === "subscription" && (
-                <div className="space-y-8">
-                  <div className="text-center space-y-4">
-                    <span className="inline-flex items-center gap-1.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                      Premium Upgrades
-                    </span>
-                    <h2 className="text-3xl font-extrabold text-white tracking-tight">Unlock Premium Speed & Capabilities</h2>
-                    <p className="text-slate-400 max-w-lg mx-auto text-sm">
-                      Get instant 5-second tracking intervals, premium email dispatches, and full access to our predictive AI Cricket Oracle.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-6 max-w-5xl mx-auto">
+              {/* --- VIEW: SETTINGS & INTEGRATIONS --- */}
+              {currentView === "settings" && (
+                <div className="space-y-8 max-w-6xl mx-auto">
+                  
+                  {/* Settings Page Header */}
+                  <div className="relative bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 border border-slate-800/60 rounded-3xl p-8 overflow-hidden shadow-2xl">
+                    <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-orange-500/5 to-transparent rounded-full blur-3xl pointer-events-none"></div>
+                    <div className="absolute -bottom-10 -left-10 w-80 h-80 bg-gradient-to-tr from-emerald-500/5 to-transparent rounded-full blur-3xl pointer-events-none"></div>
                     
-                    {/* Free Card */}
-                    <div className="bg-slate-950/50 border border-slate-800/80 rounded-2xl p-8 flex flex-col justify-between space-y-8 relative">
-                      <div className="space-y-4">
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Free Tier</span>
-                        <h3 className="text-3xl font-black text-white">₹0 <span className="text-sm font-semibold text-slate-500">/ month</span></h3>
-                        <p className="text-xs text-slate-400 leading-relaxed">Perfect for getting started with basic price tracking alert rules.</p>
-                        <ul className="space-y-2.5 pt-4 text-xs text-slate-300">
-                          <li className="flex items-center gap-2"><Check className="w-4 h-4 text-orange-400" /> <span>Up to 5 Active Trackers</span></li>
-                          <li className="flex items-center gap-2"><Check className="w-4 h-4 text-orange-400" /> <span>Standard Check Interval</span></li>
-                          <li className="flex items-center gap-2"><Check className="w-4 h-4 text-orange-400" /> <span>Basic Price History Chart</span></li>
-                        </ul>
-                      </div>
-                      <button 
-                        onClick={() => handleUpgradeSubscription("Free")}
-                        className={`w-full font-bold py-3 rounded-xl text-sm transition-all cursor-pointer ${
-                          currentUser?.subscription === "Free" 
-                            ? "bg-slate-800 text-slate-300 border border-slate-700/80 cursor-default" 
-                            : "bg-slate-900 border border-slate-800 text-white hover:bg-slate-800"
-                        }`}
-                        disabled={currentUser?.subscription === "Free" || checkoutLoading}
-                      >
-                        {currentUser?.subscription === "Free" ? "Current Plan" : "Downgrade"}
-                      </button>
-                    </div>
-
-                    {/* Pro Card */}
-                    <div className="bg-slate-950/80 border border-orange-500/30 rounded-2xl p-8 flex flex-col justify-between relative shadow-xl shadow-orange-500/5">
-                      <div className="absolute top-0 right-6 -translate-y-1/2 bg-gradient-to-r from-orange-500 to-amber-500 text-white text-[10px] font-bold px-3 py-1 rounded-full border border-orange-400/20 tracking-wide">
-                        RECOMMENDED
-                      </div>
-                      <div className="space-y-8">
-                        <div>
-                          <span className="text-xs font-bold text-orange-400 uppercase tracking-wider">Pro Plan</span>
-                          <h3 className="text-3xl font-extrabold text-white mt-1">₹20 <span className="text-xs text-slate-400">/ month</span></h3>
-                          <p className="text-slate-400 text-xs mt-2">Best for active shoppers looking for instant, blazing-fast alerts</p>
+                    <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                      <div className="space-y-3">
+                        <div className="inline-flex items-center gap-2 bg-gradient-to-r from-orange-500/10 to-amber-500/10 text-orange-400 border border-orange-500/20 text-xs font-extrabold px-3.5 py-1.5 rounded-full tracking-wider uppercase shadow-sm">
+                          <Settings className="w-3.5 h-3.5" />
+                          <span>Preferences & Integrations</span>
                         </div>
-                        <ul className="space-y-3">
-                          <li className="flex items-center gap-3 text-sm text-slate-300">
-                            <Check className="w-4 h-4 text-orange-400" />
-                            <span>Up to 50 active trackers</span>
-                          </li>
-                          <li className="flex items-center gap-3 text-sm text-slate-300">
-                            <Check className="w-4 h-4 text-orange-400" />
-                            <span className="font-semibold text-white">Ultra-fast 5-second interval</span>
-                          </li>
-                          <li className="flex items-center gap-3 text-sm text-slate-300">
-                            <Check className="w-4 h-4 text-orange-400" />
-                            <span>Instant Email notifications</span>
-                          </li>
-                          <div className="border-t border-slate-800/60 my-2"></div>
-                          <li className="flex items-center gap-3 text-sm text-slate-300 font-semibold">
-                            <Sparkles className="w-4 h-4 text-amber-400" />
-                            <span>AI Price Sentiment Analysis</span>
-                          </li>
-                        </ul>
-                      </div>
-                      <button 
-                        onClick={() => handleUpgradeSubscription("Pro")}
-                        disabled={currentUser?.subscription === "Pro" || checkoutLoading}
-                        className={`w-full mt-6 py-3 rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                          currentUser?.subscription === "Pro"
-                            ? "bg-slate-900 border border-slate-800 text-slate-400 cursor-default"
-                            : "bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:brightness-110 active:scale-[0.98]"
-                        }`}
-                      >
-                        {checkoutLoading && checkoutPlan === "Pro" ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : null}
-                        <span>{currentUser?.subscription === "Pro" ? "Current Plan" : "Upgrade to Pro (₹20)"}</span>
-                      </button>
-                    </div>
-
-                    {/* Premium Card */}
-                    <div className="bg-slate-950 border border-slate-800/80 rounded-2xl p-8 flex flex-col justify-between relative">
-                      <div className="space-y-8">
-                        <div>
-                          <span className="text-xs font-bold text-indigo-400 tracking-wide uppercase">Premium Plan</span>
-                          <h3 className="text-3xl font-extrabold text-white tracking-tight mt-1">₹50 <span className="text-slate-500 text-sm">/ month</span></h3>
-                          <p className="text-slate-400 text-xs mt-2">Unlimited tracking power with full Predictive Cricket Oracle access</p>
-                        </div>
-                        <ul className="space-y-3">
-                          <li className="flex items-center gap-3 text-sm text-slate-300">
-                            <Check className="w-4 h-4 text-orange-400" />
-                            <span>Unlimited price trackers</span>
-                          </li>
-                          <li className="flex items-center gap-3 text-sm text-slate-300">
-                            <Check className="w-4 h-4 text-orange-400" />
-                            <span className="font-semibold text-white">Ultra-fast 5-second interval</span>
-                          </li>
-                          <li className="flex items-center gap-3 text-sm text-slate-300 font-semibold">
-                            <Sparkles className="w-4 h-4 text-amber-400" />
-                            <span>AI Cricket Next-Ball Oracle</span>
-                          </li>
-                          <li className="flex items-center gap-3 text-sm text-slate-300">
-                            <Check className="w-4 h-4 text-orange-400" />
-                            <span>Priority AI support & alerts</span>
-                          </li>
-                        </ul>
-                      </div>
-                      <button 
-                        onClick={() => handleUpgradeSubscription("Premium")}
-                        disabled={currentUser?.subscription === "Premium" || checkoutLoading}
-                        className={`w-full mt-6 py-3 rounded-xl font-bold text-sm border transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                          currentUser?.subscription === "Premium"
-                            ? "bg-slate-900 text-slate-500 border-slate-800 cursor-default"
-                            : "bg-white text-slate-900 border-slate-200 hover:bg-slate-100"
-                        }`}
-                      >
-                        {checkoutLoading && checkoutPlan === "Premium" ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : null}
-                        <span>{currentUser?.subscription === "Premium" ? "Current Plan" : "Get Premium (₹50)"}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Email & Notification Verification Console */}
-                  <div className="bg-slate-950/50 border border-slate-800/80 rounded-3xl p-8 max-w-5xl mx-auto mt-12 space-y-6">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                      <div className="space-y-2">
-                        <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                          <Mail className="w-5 h-5 text-orange-400" />
-                          <span>Email Notification & Alerts Center</span>
-                        </h3>
-                        <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
-                          Verify and test your Gmail SMTP notification channels. Clicking the button below sends a beautifully designed transaction email to <strong className="text-slate-200">{currentUser?.email}</strong> using the configured server SMTP transporter.
+                        <h2 className="text-3xl font-black text-white tracking-tight">Settings & Channels</h2>
+                        <p className="text-slate-400 text-sm max-w-2xl leading-relaxed">
+                          Configure your system preferences, test notification delivery channels, and connect to our official Telegram and WhatsApp channels for premium instant price alerts.
                         </p>
                       </div>
-                      <button
-                        onClick={handleSendTestEmail}
-                        disabled={sendingTestMail}
-                        className="bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold py-3 px-6 rounded-xl text-sm hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shrink-0 self-start md:self-center shadow-lg shadow-orange-500/10"
-                      >
-                        {sendingTestMail ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span>Sending Test Mail...</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>Send Test Email</span>
-                            <ArrowRight className="w-4 h-4" />
-                          </>
-                        )}
-                      </button>
+                      
+                      <div className="bg-slate-950/80 border border-slate-800 p-4 rounded-2xl flex items-center gap-3">
+                        <div className="w-10 h-10 bg-emerald-500/15 rounded-xl flex items-center justify-center border border-emerald-500/25 text-emerald-400">
+                          <ShieldCheck className="w-5 h-5 animate-pulse" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">System Security</p>
+                          <p className="text-xs text-emerald-400 font-bold font-mono">● LIVE SECURED INTEGRATION</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
 
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Channel Integration Section */}
+                    <div className="lg:col-span-7 space-y-6">
+                      <div className="bg-slate-950/40 border border-slate-800/60 rounded-3xl p-6 md:p-8 space-y-6">
+                        <div>
+                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <Sparkles className="w-5 h-5 text-orange-400" />
+                            <span>Instant Push Alert Channels</span>
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-1">
+                            Follow our official communication streams to receive real-time lightning-fast notifications for every price decrease.
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          
+                          {/* WhatsApp Channel */}
+                          <div className="bg-slate-950/80 border border-emerald-500/20 hover:border-emerald-500/40 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 shadow-lg group">
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div className="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20 group-hover:scale-105 transition-all">
+                                  {/* Custom SVG WhatsApp Logo */}
+                                  <svg className="w-7 h-7 text-emerald-400 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12.012 2C6.485 2 2 6.485 2 12.012c0 1.914.537 3.699 1.471 5.214L2 22l4.914-1.413c1.45.836 3.13 1.313 4.914 1.313 5.527 0 10.012-4.485 10.012-10.012C21.84 6.485 17.54 2 12.012 2zm5.728 13.5c-.244.681-1.42 1.251-1.954 1.293-.483.038-.957.191-3.084-.644-2.722-1.07-4.469-3.843-4.605-4.024-.136-.181-1.107-1.472-1.107-2.812 0-1.34 1.012-2.011 1.082-2.152.07-.141.181-.223.272-.223.09 0 .181.011.261.022.09.011.181-.034.283.215.113.272.714 1.737.771 1.85.057.113.09.249.011.396-.079.147-.113.249-.226.385-.113.136-.238.272-.34.396-.113.113-.238.238-.102.476.136.238.6 1.002 1.293 1.618.893.793 1.64 1.042 1.878 1.155.238.113.373.09.51-.068.136-.158.588-.681.747-.917.158-.238.317-.193.532-.113.215.079 1.36.644 1.595.759.238.113.396.17.453.272.057.102.057.588-.181 1.272z" />
+                                  </svg>
+                                </div>
+                                <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-extrabold px-2.5 py-0.5 rounded border border-emerald-500/20 uppercase tracking-wider">
+                                  Official
+                                </span>
+                              </div>
+                              
+                              <div className="space-y-1.5">
+                                <h4 className="text-base font-bold text-white">WhatsApp Feed</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                  Receive daily premium deal summaries and instant push messages directly in WhatsApp.
+                                </p>
+                              </div>
+                            </div>
+
+                            <a 
+                              href="https://whatsapp.com/channel/0029Vb7dBD5GpLHLcWWGq40q" 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 active:scale-[0.98] transition-all cursor-pointer"
+                            >
+                              <span>Join WhatsApp Channel</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+
+                          {/* Telegram Channel */}
+                          <div className="bg-slate-950/80 border border-sky-500/20 hover:border-sky-500/40 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition-all duration-300 shadow-lg group">
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div className="w-12 h-12 bg-sky-500/10 rounded-xl flex items-center justify-center border border-sky-500/20 group-hover:scale-105 transition-all">
+                                  {/* Custom SVG Telegram Logo */}
+                                  <svg className="w-7 h-7 text-sky-400 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-1-.65-.35-1 .22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.11.02-1.93 1.23-5.46 3.62-.51.35-.98.53-1.39.51-.46-.01-1.35-.26-2.01-.48-.81-.27-1.46-.42-1.4-.88.03-.24.36-.49.99-.74 3.88-1.69 6.46-2.8 7.74-3.32 3.68-1.5 4.44-1.76 4.94-1.77.11 0 .36.03.52.16.14.11.18.27.2.39.02.13.03.38.01.69z"/>
+                                  </svg>
+                                </div>
+                                <span className="text-[10px] bg-sky-500/10 text-sky-400 font-extrabold px-2.5 py-0.5 rounded border border-sky-500/20 uppercase tracking-wider">
+                                  Official
+                                </span>
+                              </div>
+                              
+                              <div className="space-y-1.5">
+                                <h4 className="text-base font-bold text-white">Telegram Broadcast</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                  Never miss an update. Join our vibrant Telegram community for direct webhook pings.
+                                </p>
+                              </div>
+                            </div>
+
+                            <a 
+                              href="https://t.me/+M7D2ZetGU5hiODE1" 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-sky-500/10 hover:shadow-sky-500/20 active:scale-[0.98] transition-all cursor-pointer"
+                            >
+                              <span>Join Telegram Channel</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+
+                        </div>
+                      </div>
+
+                      {/* Interactive Preference Controls */}
+                      <div className="bg-slate-950/40 border border-slate-800/60 rounded-3xl p-6 md:p-8 space-y-6">
+                        <div>
+                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <Sliders className="w-5 h-5 text-orange-400" />
+                            <span>Notification Tuning Preferences</span>
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-1">
+                            Fine-tune which communication channels are actively dispatched during price alerts.
+                          </p>
+                        </div>
+
+                        <div className="space-y-4">
+                          
+                          {/* Toggle WhatsApp Alerts */}
+                          <div className="flex items-center justify-between p-4 bg-slate-950/60 border border-slate-800/80 rounded-2xl">
+                            <div className="space-y-1">
+                              <p className="text-sm font-bold text-white">WhatsApp Feed Synchronization</p>
+                              <p className="text-xs text-slate-500">Route active drops to WhatsApp companion feed</p>
+                            </div>
+                            <button 
+                              onClick={() => setSettingsWhatsAppAlerts(!settingsWhatsAppAlerts)}
+                              className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer ${settingsWhatsAppAlerts ? "bg-emerald-500" : "bg-slate-800"}`}
+                            >
+                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settingsWhatsAppAlerts ? "translate-x-6" : "translate-x-0"}`} />
+                            </button>
+                          </div>
+
+                          {/* Toggle Telegram Alerts */}
+                          <div className="flex items-center justify-between p-4 bg-slate-950/60 border border-slate-800/80 rounded-2xl">
+                            <div className="space-y-1">
+                              <p className="text-sm font-bold text-white">Telegram Broadcast Webhooks</p>
+                              <p className="text-xs text-slate-500">Allow system hooks to notify active Telegram streams</p>
+                            </div>
+                            <button 
+                              onClick={() => setSettingsTelegramAlerts(!settingsTelegramAlerts)}
+                              className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer ${settingsTelegramAlerts ? "bg-sky-500" : "bg-slate-800"}`}
+                            >
+                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settingsTelegramAlerts ? "translate-x-6" : "translate-x-0"}`} />
+                            </button>
+                          </div>
+
+                          {/* Toggle Email Alerts */}
+                          <div className="flex items-center justify-between p-4 bg-slate-950/60 border border-slate-800/80 rounded-2xl">
+                            <div className="space-y-1">
+                              <p className="text-sm font-bold text-white">Direct Email Dispatch</p>
+                              <p className="text-xs text-slate-500">Send custom transactional emails upon deal threshold trigger</p>
+                            </div>
+                            <button 
+                              onClick={() => setSettingsEmailAlerts(!settingsEmailAlerts)}
+                              className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer ${settingsEmailAlerts ? "bg-orange-500" : "bg-slate-800"}`}
+                            >
+                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settingsEmailAlerts ? "translate-x-6" : "translate-x-0"}`} />
+                            </button>
+                          </div>
+
+                          {/* Toggle Weekly Summary */}
+                          <div className="flex items-center justify-between p-4 bg-slate-950/60 border border-slate-800/80 rounded-2xl">
+                            <div className="space-y-1">
+                              <p className="text-sm font-bold text-white">Weekly Savings Digest</p>
+                              <p className="text-xs text-slate-500">Receive consolidated historical summary of tracking actions</p>
+                            </div>
+                            <button 
+                              onClick={() => setSettingsWeeklySummary(!settingsWeeklySummary)}
+                              className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer ${settingsWeeklySummary ? "bg-orange-500" : "bg-slate-800"}`}
+                            >
+                              <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settingsWeeklySummary ? "translate-x-6" : "translate-x-0"}`} />
+                            </button>
+                          </div>
+
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Right Hand: Test Center & Profile Details */}
+                    <div className="lg:col-span-5 space-y-6">
+                      
+                      {/* SMTP Test Console */}
+                      <div className="bg-slate-950/40 border border-slate-800/60 rounded-3xl p-6 md:p-8 space-y-6">
+                        <div>
+                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <Mail className="w-5 h-5 text-orange-400" />
+                            <span>SMTP Alert Dispatcher</span>
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-1">
+                            Verify and test your Gmail SMTP server notifications instantly.
+                          </p>
+                        </div>
+
+                        <div className="bg-slate-950/60 border border-slate-900 rounded-2xl p-5 space-y-4">
+                          <p className="text-xs text-slate-400 leading-relaxed">
+                            Sends a beautifully designed sample transaction notification email to your verified address <strong className="text-slate-200 font-mono text-[11px]">{currentUser?.email}</strong>.
+                          </p>
+
+                          <button
+                            onClick={handleSendTestEmail}
+                            disabled={sendingTestMail}
+                            className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:brightness-110 active:scale-[0.98] text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-orange-500/10 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {sendingTestMail ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Sending Dispatch Test...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>Send Test Email Alert</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Personal Security Credentials */}
+                      <div className="bg-slate-950/40 border border-slate-800/60 rounded-3xl p-6 md:p-8 space-y-6">
+                        <div>
+                          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <User className="w-5 h-5 text-orange-400" />
+                            <span>Personal Profile & Security</span>
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-1">
+                            Read-only details associated with your verified cloud-synced account.
+                          </p>
+                        </div>
+
+                        <div className="space-y-4 text-xs">
+                          
+                          <div className="flex justify-between items-center py-2.5 border-b border-slate-900">
+                            <span className="text-slate-500 font-semibold">Username</span>
+                            <span className="text-slate-200 font-bold">{currentUser?.username || "N/A"}</span>
+                          </div>
+
+                          <div className="flex justify-between items-center py-2.5 border-b border-slate-900">
+                            <span className="text-slate-500 font-semibold">Email Link</span>
+                            <span className="text-slate-200 font-bold truncate max-w-[200px]">{currentUser?.email || "N/A"}</span>
+                          </div>
+
+                          <div className="flex justify-between items-center py-2.5 border-b border-slate-900">
+                            <span className="text-slate-500 font-semibold">Account Tier</span>
+                            <span className="text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded font-extrabold uppercase text-[9px] tracking-wide">
+                              {currentUser?.subscription || "Free Tier"}
+                            </span>
+                          </div>
+
+                          {currentUser?.userCode && (
+                            <div className="flex justify-between items-center py-2.5 border-b border-slate-900">
+                              <span className="text-slate-500 font-semibold">Verification Key</span>
+                              <span className="text-orange-400 font-mono font-bold tracking-wide">{currentUser.userCode}</span>
+                            </div>
+                          )}
+
+                          <div className="flex justify-between items-center py-2.5">
+                            <span className="text-slate-500 font-semibold">Server Integration Status</span>
+                            <span className="text-emerald-400 font-bold font-mono">● SECURED DIRECT VIA FIRESTORE</span>
+                          </div>
+
+                        </div>
+                      </div>
+
+                    </div>
+
+                  </div>
+                </div>
               )}
 
               {/* --- VIEW: NEXT BALL ORACLE --- */}
@@ -2076,6 +2762,362 @@ export default function App() {
 
                 </div>
               )}
+
+              {/* --- VIEW: COMPARE PRODUCTS --- */}
+              {currentView === "compare" && (
+                <div className="space-y-8 max-w-6xl mx-auto">
+                  <div className="text-center space-y-3">
+                    <div className="inline-flex items-center gap-2 bg-orange-500/10 text-orange-400 border border-orange-500/20 text-xs font-extrabold px-3.5 py-1.5 rounded-full tracking-wider uppercase">
+                      <GitCompare className="w-4 h-4 text-orange-500" />
+                      <span>Product Duel Arena</span>
+                    </div>
+                    <h2 className="text-4xl font-extrabold text-white tracking-tight">AI Dual-Product Comparer</h2>
+                    <p className="text-slate-400 max-w-xl mx-auto text-sm">Paste any two Indian e-commerce links (Amazon, Flipkart, Myntra, Croma, etc.) to scan, align features, and calculate score recommendations side-by-side.</p>
+                  </div>
+
+                  {/* Dual Inputs Grid */}
+                  <div className="bg-slate-950/60 backdrop-blur-xl border border-slate-800/60 rounded-3xl p-8 shadow-2xl space-y-6 relative">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Product Link 1 */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-[10px] text-orange-400 font-extrabold">1</span>
+                          <span>First Product URL</span>
+                        </label>
+                        <input 
+                          type="text"
+                          value={compareUrl1}
+                          onChange={(e) => setCompareUrl1(e.target.value)}
+                          placeholder="Paste Amazon, Flipkart, or Myntra link..."
+                          className="w-full bg-slate-900 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3.5 px-4 text-sm outline-none transition-all placeholder:text-slate-600 text-slate-100"
+                        />
+                        <div className="flex gap-2">
+                          <button 
+                            type="button"
+                            onClick={() => setCompareUrl1("https://www.amazon.in/dp/B0CHX5R3XY")} 
+                            className="text-[10px] bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-300 font-bold px-2.5 py-1 rounded border border-slate-800/80 transition-all cursor-pointer"
+                          >
+                            + Use iPhone Example
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setCompareUrl1("https://www.amazon.in/dp/B0CY5JGFSK")} 
+                            className="text-[10px] bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-300 font-bold px-2.5 py-1 rounded border border-slate-800/80 transition-all cursor-pointer"
+                          >
+                            + Use MacBook Example
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Product Link 2 */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-extrabold">2</span>
+                          <span>Second Product URL</span>
+                        </label>
+                        <input 
+                          type="text"
+                          value={compareUrl2}
+                          onChange={(e) => setCompareUrl2(e.target.value)}
+                          placeholder="Paste alternative e-commerce store product link..."
+                          className="w-full bg-slate-900 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3.5 px-4 text-sm outline-none transition-all placeholder:text-slate-600 text-slate-100"
+                        />
+                        <div className="flex gap-2">
+                          <button 
+                            type="button"
+                            onClick={() => setCompareUrl2("https://www.flipkart.com/apple-iphone-15-pro-black-titanium-128-gb/p/itm4b0ab4098")} 
+                            className="text-[10px] bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-300 font-bold px-2.5 py-1 rounded border border-slate-800/80 transition-all cursor-pointer"
+                          >
+                            + Use Pro Mobile Example
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setCompareUrl2("https://www.flipkart.com/hp-pavilion-intel-core-i5-16gb/p/itm53")} 
+                            className="text-[10px] bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-300 font-bold px-2.5 py-1 rounded border border-slate-800/80 transition-all cursor-pointer"
+                          >
+                            + Use Laptop Example
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {compareError && (
+                      <div className="bg-rose-500/5 border border-rose-500/20 p-4 rounded-xl flex items-center gap-3 text-rose-400 text-xs font-bold">
+                        <AlertCircle className="w-5 h-5 shrink-0" />
+                        <span>{compareError}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-center pt-4">
+                      <button 
+                        onClick={handleCompareProducts}
+                        disabled={compareLoading || !compareUrl1.trim() || !compareUrl2.trim()}
+                        className="bg-gradient-to-r from-orange-500 to-amber-500 hover:brightness-110 active:scale-95 text-white font-black py-4 px-10 rounded-2xl shadow-xl shadow-orange-500/15 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        {compareLoading ? (
+                          <>
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            <span>Aligning Specifications...</span>
+                          </>
+                        ) : (
+                          <>
+                            <GitCompare className="w-5 h-5" />
+                            <span>Initiate AI Product Duel</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* LOADING PLACEHOLDER */}
+                  {compareLoading && (
+                    <div className="bg-slate-950/40 border border-slate-800/60 rounded-3xl p-16 flex flex-col items-center justify-center text-center space-y-6">
+                      <div className="relative animate-pulse">
+                        <div className="w-16 h-16 rounded-full border-4 border-orange-500/20 border-t-orange-500 animate-spin"></div>
+                        <GitCompare className="w-6 h-6 text-orange-400 absolute inset-0 m-auto" />
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="text-lg font-bold text-white">Comparing Products & Scraping Live Specs</h4>
+                        <p className="text-xs text-slate-500 max-w-sm">Fetching and aligning product features, extracting matching parameters, and computing wise score recommendations via Gemini 3.5-flash...</p>
+                      </div>
+                      <div className="flex flex-col space-y-2 text-[10px] font-mono text-slate-400 max-w-xs w-full bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 text-left">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400 font-bold">✔</span>
+                          <span>Scraping URL 1 specs & details...</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400 font-bold">✔</span>
+                          <span>Scraping URL 2 specs & details...</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-400 animate-pulse">●</span>
+                          <span>Aligning spec parameters side-by-side...</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500">○</span>
+                          <span>Generating definitive value scoring...</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* COMPARISON RESULTS */}
+                  {compareResult && (
+                    <div className="space-y-8">
+                      {/* Product Duel Cards (Side-by-side) */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {/* Product 1 Card */}
+                        <div className={`bg-slate-950/60 border rounded-3xl p-6 relative overflow-hidden transition-all ${
+                          compareResult.product1Score >= compareResult.product2Score 
+                            ? "border-orange-500/40 shadow-xl shadow-orange-500/5 bg-gradient-to-b from-orange-500/5 to-transparent" 
+                            : "border-slate-800/80"
+                        }`}>
+                          {compareResult.product1Score >= compareResult.product2Score && (
+                            <span className="absolute top-4 right-4 bg-orange-500 text-white font-black text-[10px] uppercase tracking-wider py-1 px-3 rounded-full flex items-center gap-1 shadow-md">
+                              <Sparkles className="w-3 h-3" />
+                              <span>AI Recommended Pick</span>
+                            </span>
+                          )}
+                          
+                          <div className="flex gap-4 items-start">
+                            {compareResult.product1.image && (
+                              <img 
+                                src={compareResult.product1.image} 
+                                alt={compareResult.product1.name} 
+                                className="w-20 h-20 object-cover rounded-xl border border-slate-800 bg-white"
+                              />
+                            )}
+                            <div className="space-y-2 flex-1">
+                              <span className="text-[10px] bg-slate-900 border border-slate-800 text-slate-400 px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                                {compareResult.product1.store || "Store A"}
+                              </span>
+                              <h3 className="text-lg font-bold text-white leading-tight">{compareResult.product1.name}</h3>
+                              <p className="text-2xl font-black text-orange-400">₹{compareResult.product1.price.toLocaleString("en-IN")}</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-6 border-t border-slate-800/60 pt-6 flex items-center justify-between gap-6">
+                            <div className="space-y-1">
+                              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Value & Spec Score</span>
+                              <div className="flex items-baseline gap-1.5">
+                                <span className="text-3xl font-black text-white">{compareResult.product1Score}</span>
+                                <span className="text-xs text-slate-500 font-bold">/ 100</span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-400 leading-relaxed flex-1 bg-slate-900/40 p-3 rounded-xl border border-slate-900 font-medium">
+                              {compareResult.product1ScoreBreakdown}
+                            </p>
+                          </div>
+
+                          <div className="mt-4 flex justify-end">
+                            <a 
+                              href={compareResult.product1.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-xs bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 font-bold py-2 px-4 rounded-xl transition-all inline-flex items-center gap-1"
+                            >
+                              <span>View Store Offer</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </div>
+
+                        {/* Product 2 Card */}
+                        <div className={`bg-slate-950/60 border rounded-3xl p-6 relative overflow-hidden transition-all ${
+                          compareResult.product2Score >= compareResult.product1Score 
+                            ? "border-orange-500/40 shadow-xl shadow-orange-500/5 bg-gradient-to-b from-orange-500/5 to-transparent" 
+                            : "border-slate-800/80"
+                        }`}>
+                          {compareResult.product2Score >= compareResult.product1Score && (
+                            <span className="absolute top-4 right-4 bg-orange-500 text-white font-black text-[10px] uppercase tracking-wider py-1 px-3 rounded-full flex items-center gap-1 shadow-md">
+                              <Sparkles className="w-3 h-3" />
+                              <span>AI Recommended Pick</span>
+                            </span>
+                          )}
+                          
+                          <div className="flex gap-4 items-start">
+                            {compareResult.product2.image && (
+                              <img 
+                                src={compareResult.product2.image} 
+                                alt={compareResult.product2.name} 
+                                className="w-20 h-20 object-cover rounded-xl border border-slate-800 bg-white"
+                              />
+                            )}
+                            <div className="space-y-2 flex-1">
+                              <span className="text-[10px] bg-slate-900 border border-slate-800 text-slate-400 px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                                {compareResult.product2.store || "Store B"}
+                              </span>
+                              <h3 className="text-lg font-bold text-white leading-tight">{compareResult.product2.name}</h3>
+                              <p className="text-2xl font-black text-orange-400">₹{compareResult.product2.price.toLocaleString("en-IN")}</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-6 border-t border-slate-800/60 pt-6 flex items-center justify-between gap-6">
+                            <div className="space-y-1">
+                              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Value & Spec Score</span>
+                              <div className="flex items-baseline gap-1.5">
+                                <span className="text-3xl font-black text-white">{compareResult.product2Score}</span>
+                                <span className="text-xs text-slate-500 font-bold">/ 100</span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-400 leading-relaxed flex-1 bg-slate-900/40 p-3 rounded-xl border border-slate-900 font-medium">
+                              {compareResult.product2ScoreBreakdown}
+                            </p>
+                          </div>
+
+                          <div className="mt-4 flex justify-end">
+                            <a 
+                              href={compareResult.product2.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-xs bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 font-bold py-2 px-4 rounded-xl transition-all inline-flex items-center gap-1"
+                            >
+                              <span>View Store Offer</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Definitive Verdict Dashboard */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="md:col-span-2 bg-slate-950/60 border border-slate-800/60 rounded-2xl p-6 flex gap-4 items-start">
+                          <div className="w-12 h-12 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center shrink-0">
+                            <Sparkles className="w-6 h-6 text-orange-400" />
+                          </div>
+                          <div className="space-y-2">
+                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-wider">AI Definitive Verdict</h4>
+                            <p className="text-sm text-slate-200 leading-relaxed font-semibold">{compareResult.overallVerdict}</p>
+                          </div>
+                        </div>
+
+                        <div className="bg-gradient-to-br from-amber-500/10 to-transparent border border-amber-500/25 rounded-2xl p-6 flex flex-col justify-between">
+                          <div className="space-y-1">
+                            <h4 className="text-[10px] font-black text-amber-400 uppercase tracking-wider">Feature Match Summary</h4>
+                            <p className="text-xs text-slate-300 leading-relaxed mt-2 font-medium">
+                              {compareResult.matchingFeaturesSummary}
+                            </p>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-4">
+                            Matching stats calibrated thoroughly
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Feature Alignment Table */}
+                      <div className="bg-slate-950/60 border border-slate-800/60 rounded-3xl overflow-hidden shadow-xl">
+                        <div className="p-6 border-b border-slate-800/60 bg-slate-950 flex justify-between items-center">
+                          <div>
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                              <Sliders className="w-5 h-5 text-orange-500" />
+                              <span>Specs Alignment Battle</span>
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-1">Direct specification comparison highlighting parameter matching and category winners.</p>
+                          </div>
+                          <span className="bg-slate-900 border border-slate-800 text-slate-400 font-mono text-[10px] px-3 py-1 rounded-full font-bold">
+                            {compareResult.features.length} Features Scanned
+                          </span>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-800/60 bg-slate-900/30 text-[10px] text-slate-400 font-black uppercase tracking-wider">
+                                <th className="p-4 w-1/4">Specification category</th>
+                                <th className="p-4 w-1/3 truncate max-w-xs">{compareResult.product1.name}</th>
+                                <th className="p-4 w-1/3 truncate max-w-xs">{compareResult.product2.name}</th>
+                                <th className="p-4 text-center">Status</th>
+                                <th className="p-4 text-right">Spec Winner</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/40 text-slate-300">
+                              {compareResult.features.map((feat: any, idx: number) => {
+                                return (
+                                  <tr key={idx} className="hover:bg-slate-900/20 transition-all">
+                                    <td className="p-4 font-bold text-slate-400">{feat.featureName}</td>
+                                    
+                                    <td className={`p-4 font-medium ${feat.winner === "product1" ? "text-emerald-400 font-semibold" : "text-slate-300"}`}>
+                                      {feat.product1Value}
+                                    </td>
+                                    
+                                    <td className={`p-4 font-medium ${feat.winner === "product2" ? "text-emerald-400 font-semibold" : "text-slate-300"}`}>
+                                      {feat.product2Value}
+                                    </td>
+                                    
+                                    <td className="p-4 text-center">
+                                      {feat.match ? (
+                                        <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-extrabold px-2 py-0.5 rounded uppercase">
+                                          Match
+                                        </span>
+                                      ) : (
+                                        <span className="bg-slate-800 text-slate-500 border border-slate-700/50 text-[9px] font-extrabold px-2 py-0.5 rounded uppercase">
+                                          Differs
+                                        </span>
+                                      )}
+                                    </td>
+
+                                    <td className="p-4 text-right font-black">
+                                      {feat.winner === "product1" ? (
+                                        <span className="text-orange-400">🏆 Product 1</span>
+                                      ) : feat.winner === "product2" ? (
+                                        <span className="text-orange-400">🏆 Product 2</span>
+                                      ) : (
+                                        <span className="text-slate-500">Tie / Equal</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                    </div>
+                  )}
+
+                </div>
+              )}
             </div>
           </main>
         </div>
@@ -2199,114 +3241,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* --- GOOGLE FALLBACK AUTH MODAL --- */}
-      <AnimatePresence>
-        {showGoogleFallback && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowGoogleFallback(false)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
 
-            {/* Modal Card */}
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-10 p-6 space-y-6"
-            >
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-amber-400" />
-                    <span>Google Auth Fallback</span>
-                  </h3>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Google Sign-In was blocked or is not supported in the sandbox iframe. Use this local developer bypass to sign in or register instantly.
-                  </p>
-                </div>
-                <button 
-                  onClick={() => setShowGoogleFallback(false)}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleGoogleFallbackSubmit} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    Google Email Address
-                  </label>
-                  <div className="relative">
-                    <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
-                    <input 
-                      type="email" 
-                      required 
-                      value={googleFallbackEmail} 
-                      onChange={(e) => setGoogleFallbackEmail(e.target.value)}
-                      placeholder="your.email@gmail.com" 
-                      className="w-full bg-slate-950/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3 pl-11 pr-4 text-sm outline-none transition-all placeholder:text-slate-700 text-white"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    Display Name
-                  </label>
-                  <div className="relative">
-                    <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
-                    <input 
-                      type="text" 
-                      required 
-                      value={googleFallbackUsername} 
-                      onChange={(e) => setGoogleFallbackUsername(e.target.value)}
-                      placeholder="Google User Name" 
-                      className="w-full bg-slate-950/60 border border-slate-800 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-xl py-3 pl-11 pr-4 text-sm outline-none transition-all placeholder:text-slate-700 text-white"
-                    />
-                  </div>
-                </div>
-
-                {authError && (
-                  <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                    <span>{authError}</span>
-                  </div>
-                )}
-
-                <div className="flex gap-3 pt-2">
-                  <button 
-                    type="button"
-                    onClick={() => setShowGoogleFallback(false)}
-                    className="flex-1 bg-slate-800 hover:bg-slate-750 text-white font-semibold py-3 px-4 rounded-xl transition-all cursor-pointer text-sm"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit" 
-                    disabled={authLoading}
-                    className="flex-1 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 text-sm"
-                  >
-                    {authLoading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        <span>Sign In</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

@@ -131,14 +131,22 @@ class CollectionQuery {
     }
 
     const rows = db.prepare(queryStr).all(...params);
-    const docs = rows.map((row: any) => ({
-      id: row.userId || row.id,
-      exists: true,
-      data: () => {
-        const { userId, id, ...rest } = row;
-        return { ...rest };
-      }
-    }));
+    const docs = rows.map((row: any) => {
+      const docId = this.colName === "users" ? row.userId : row.id;
+      return {
+        id: docId,
+        exists: true,
+        data: () => {
+          if (this.colName === "users") {
+            const { password, ...rest } = row; // hide password in user data if fetched, but keep userId
+            return { ...rest };
+          } else {
+            const { id, ...rest } = row; // remove local row 'id' column but keep 'userId' and others
+            return { ...rest };
+          }
+        }
+      };
+    });
 
     const result = {
       empty: docs.length === 0,
@@ -177,8 +185,13 @@ class DocumentQuery {
       exists: true,
       id: this.id,
       data: () => {
-        const { userId, id, ...rest } = row;
-        return { ...rest };
+        if (this.colName === "users") {
+          const { password, ...rest } = row;
+          return { ...rest };
+        } else {
+          const { id, ...rest } = row;
+          return { ...rest };
+        }
       }
     };
   }
